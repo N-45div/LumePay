@@ -1,0 +1,23 @@
+{
+    "private": true,
+    "workspaces": [
+        "apps/*",
+        "packages/*"
+    ],
+    "name": "solanahack",
+    "version": "0.0.1",
+    "scripts": {
+        "format": "turbo run format",
+        "build": "turbo run build",
+        "dev": "turbo run dev",
+        "lint": "turbo run lint"
+    },
+    "main": "index.js",
+    "directories": {
+        "doc": "docs"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "description": ""
+}
