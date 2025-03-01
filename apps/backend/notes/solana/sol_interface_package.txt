@@ -1,0 +1,110 @@
+// apps/backend/src/interfaces/solana/ISolanaService.ts
+
+import { Result } from '../../utils/result';
+
+export interface SwapQuote {
+    id: string;
+    fromAmount: number;
+    toAmount: number;
+    rate: number;
+    expiresAt: Date;
+}
+
+export interface SwapResult {
+    txHash: string;
+    status: 'completed' | 'failed' | 'pending';
+    inputAmount: number;
+    outputAmount: number;
+    fee: number;
+    timestamp: Date;
+}
+
+export interface TransactionStatus {
+    status: 'completed' | 'failed' | 'pending';
+    confirmations?: number;
+    error?: string;
+}
+
+export interface ISolanaService {
+    // Swap operations
+    getSwapQuote(
+        fromCurrency: string,
+        toCurrency: string,
+        amount: number,
+        slippage?: number
+    ): Promise<Result<SwapQuote, Error>>;
+
+    executeSwap(
+        quoteId: string,
+        walletAddress: string
+    ): Promise<Result<SwapResult, Error>>;
+
+    // Transaction status
+    getTransactionStatus(
+        txHash: string
+    ): Promise<Result<TransactionStatus, Error>>;
+
+    // Balance operations
+    getBalance(
+        address: string,
+        currency: string
+    ): Promise<Result<number, Error>>;
+}
+
+// apps/backend/src/utils/result.ts
+
+export type Result<T, E = Error> = {
+    success: true;
+    data: T;
+} | {
+    success: false;
+    error: E;
+};
+
+export const createSuccess = <T>(data: T): Result<T> => ({
+    success: true,
+    data,
+});
+
+export const createError = <E>(error: E): Result<never, E> => ({
+    success: false,
+    error,
+});
+
+// apps/backend/src/utils/errors.ts
+
+export class SolanaError extends Error {
+    constructor(
+        message: string,
+        public readonly code: string,
+        public readonly details?: Record<string, any>
+    ) {
+        super(message);
+        this.name = this.constructor.name;
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+export class InsufficientBalanceError extends SolanaError {
+    constructor(details?: Record<string, any>) {
+        super("Insufficient balance", "INSUFFICIENT_BALANCE", details);
+    }
+}
+
+export class InvalidAddressError extends SolanaError {
+    constructor(details?: Record<string, any>) {
+        super("Invalid address", "INVALID_ADDRESS", details);
+    }
+}
+
+export class QuoteError extends SolanaError {
+    constructor(details?: Record<string, any>) {
+        super("Failed to get quote", "QUOTE_ERROR", details);
+    }
+}
+
+export class TransactionError extends SolanaError {
+    constructor(details?: Record<string, any>) {
+        super("Transaction failed", "TRANSACTION_ERROR", details);
+    }
+}
