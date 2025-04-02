@@ -3,19 +3,29 @@
 import { Injectable } from '@nestjs/common';
 import { Logger } from '../../../utils/logger';
 import { Result, createSuccess, createError } from '../../../utils/result';
-import { BankError } from './errors/BankErrors';
 import { BankAccountRepository } from '../../../db/repositories/bank-account.repository';
 import { BankValidationService } from './validation/BankValidationService';
+import { BankError } from './errors/BankErrors';
+import { 
+    BankAccount as BankAccountEntity, 
+    BankAccountStatus as EntityBankAccountStatus, 
+    BankAccountType,
+    VerificationMethod
+} from '../../../db/models/bank-account.entity';
 
+// Interface used within the service
 export interface BankAccount {
     id: string;
     userId: string;
-    accountType: 'checking' | 'savings';
-    accountNumber: string;
+    accountType: BankAccountType;
     routingNumber: string;
     bankName: string;
+    accountNumberLast4: string;
     holderName: string;
     status: BankAccountStatus;
+    institutionName: string;
+    verificationMethod: VerificationMethod;
+    processorToken?: string;
     metadata: Record<string, any>;
     createdAt: Date;
     updatedAt: Date;
@@ -25,7 +35,8 @@ export enum BankAccountStatus {
     PENDING = 'pending',
     ACTIVE = 'active',
     FAILED = 'failed',
-    DISABLED = 'disabled'
+    INACTIVE = 'inactive',
+    FROZEN = 'frozen'
 }
 
 export interface BankAccountCreationParams {
@@ -44,7 +55,7 @@ export interface BankAccountValidationResult {
         bankName: string;
         accountType: string;
         lastFour: string;
-    };
+    }
     error?: string;
 }
 
@@ -59,43 +70,45 @@ export class BankAccountService {
         this.logger = new Logger('BankAccountService');
     }
 
+    /**
+     * Create a new bank account after validation
+     */
     async createBankAccount(
         params: BankAccountCreationParams
-    ): Promise<Result<BankAccount, BankError>> {
+    ): Promise<Result<BankAccountEntity, BankError>> {
         try {
-            // First validate the bank account details
+            // Validate the bank account details
             const validationResult = await this.validateBankAccount({
                 accountNumber: params.accountNumber,
                 routingNumber: params.routingNumber
             });
 
             if (!validationResult.isValid) {
-                throw new BankError(
-                    validationResult.error || 'Invalid bank account',
-                    'INVALID_BANK_ACCOUNT'
-                );
+                return createError(new BankError(
+                    'INVALID_BANK_DETAILS',
+                    validationResult.error || 'Bank account validation failed'
+                ));
             }
 
-            // Create a new bank account record
-            const bankAccount = {
-                id: this.generateAccountId(),
+            // Create the bank account entity
+            const bankAccountData = {
                 userId: params.userId,
-                accountType: params.accountType,
-                accountNumber: this.maskAccountNumber(params.accountNumber),
+                accountType: params.accountType === 'checking' ? BankAccountType.CHECKING : BankAccountType.SAVINGS,
+                name: params.holderName,
+                accountNumberLast4: this.maskAccountNumber(params.accountNumber),
                 routingNumber: params.routingNumber,
-                bankName: params.bankName,
-                holderName: params.holderName,
-                status: BankAccountStatus.PENDING,
-                metadata: {                  // Always provide a metadata object
-                    ...(params.metadata || {}),
+                institutionName: params.bankName,
+                status: EntityBankAccountStatus.PENDING_VERIFICATION,
+                verificationMethod: VerificationMethod.MANUAL,
+                processorToken: '', // Add empty processor token for now
+                metadata: {
+                    ...params.metadata,
                     validatedAt: new Date(),
                     validationInfo: validationResult.accountInfo
-                },
-                createdAt: new Date(),
-                updatedAt: new Date()
-            } satisfies BankAccount;  // Use satisfies to ensure type safety
+                }
+            };
 
-            const savedAccount = await this.bankAccountRepository.createBankAccount(bankAccount);
+            const savedAccount = await this.bankAccountRepository.createBankAccount(bankAccountData);
 
             this.logger.info('Bank account created', { 
                 userId: params.userId,
@@ -103,18 +116,20 @@ export class BankAccountService {
                 accountType: params.accountType
             });
 
-            return createSuccess(savedAccount);  // Return the saved account instead of the original
-        } catch (error) {
-            this.logger.error('Failed to create bank account', { error });
+            // Return the saved account
+            return createSuccess(savedAccount);
+        } catch (error: unknown) {
+            this.logger.error('Failed to create bank account', { 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            });
 
             if (error instanceof BankError) {
                 return createError(error);
             }
 
             return createError(new BankError(
-                'Failed to create bank account',
                 'BANK_ACCOUNT_CREATION_FAILED',
-                { originalError: error }
+                error instanceof Error ? error.message : 'Failed to create bank account'
             ));
         }
     }
@@ -179,7 +194,7 @@ export class BankAccountService {
         }
     }
 
-    async getBankAccount(id: string): Promise<Result<BankAccount, BankError>> {
+    async getBankAccount(id: string): Promise<Result<BankAccountEntity, BankError>> {
         try {
             const account = await this.bankAccountRepository.findById(id);
             if (!account) {
@@ -200,7 +215,7 @@ export class BankAccountService {
 
     async getUserBankAccounts(
         userId: string
-    ): Promise<Result<BankAccount[], BankError>> {
+    ): Promise<Result<BankAccountEntity[], BankError>> {
         try {
             const accounts = await this.bankAccountRepository.findByUserId(userId);
             return createSuccess(accounts);

@@ -2,7 +2,7 @@
 
 import { DataSource, QueryRunner, Repository, EntityManager } from 'typeorm';
 import { TransactionRepository } from '../transaction.repository';
-import { Transaction } from '../../models/transaction.entity';
+import { Transaction, TransactionType } from '../../models/transaction.entity';
 import { TransactionStatus } from '../../../types';
 import { Wallet } from '../../models/wallet.entity';
 
@@ -62,17 +62,24 @@ describe('TransactionRepository', () => {
         };
 
         const validTransactionData = {
+            userId: 'user-1',
             fromAddress: 'from-address',
             toAddress: 'to-address',
             amount: 100,
             currency: 'SOL',
             network: 'solana' as const,
             fromWalletId: 'wallet-1',
-            toWalletId: 'wallet-2'
+            toWalletId: 'wallet-2',
+            type: TransactionType.CRYPTO_PAYMENT,
+            sourceId: 'source-1',
+            destinationId: 'destination-1',
+            processorName: 'test-processor',
+            processorTransactionId: 'proc-tx-123'
         };
 
         const mockSavedTransaction: Transaction = {
             id: 'new-tx-id',
+            userId: 'user-1',
             fromAddress: validTransactionData.fromAddress,
             toAddress: validTransactionData.toAddress,
             amount: validTransactionData.amount,
@@ -83,8 +90,14 @@ describe('TransactionRepository', () => {
             metadata: {},
             fromWallet: mockWallet,
             toWallet: mockWallet,
+            type: TransactionType.CRYPTO_PAYMENT,
+            statusHistory: [],
             createdAt: new Date(),
-            updatedAt: new Date()
+            updatedAt: new Date(),
+            sourceId: 'source-1',
+            destinationId: 'destination-1',
+            processorName: 'test-processor',
+            processorTransactionId: 'proc-tx-123'
         };
 
         it('should successfully create a transaction', async () => {

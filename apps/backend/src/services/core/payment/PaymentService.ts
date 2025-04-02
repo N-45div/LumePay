@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Logger } from '../../../utils/logger';
-import { Transaction, TransactionStatus } from '../../../types';
+import { Transaction } from '../../../db/models/transaction.entity';
+import { TransactionStatus } from '../../../common/types/transaction.types';
+import { TransactionType } from '../../../db/models/transaction.entity';
 import { PaymentRequest, PaymentResponse, IPaymentProcessor } from './interfaces/payment.interface';
 import { 
     PaymentError, 
@@ -10,8 +12,7 @@ import {
 import { 
     Result, 
     createSuccess, 
-    createError,
-    mapSolanaResult 
+    createError 
 } from '../../../utils/result';
 import { 
     ISolanaService,
@@ -36,22 +37,37 @@ export class PaymentService implements IPaymentProcessor {
         this.logger = new Logger('PaymentService');
     }
 
+    /**
+     * Process a payment request
+     * @param request Payment request details
+     * @returns Payment response or error
+     */
     async processPayment(request: PaymentRequest): Promise<Result<PaymentResponse, PaymentError>> {
-        let transaction: Transaction | undefined;
+        this.logger.info(`Processing payment of ${request.amount} ${request.currency} from ${request.fromAddress} to ${request.toAddress}`);
+        
+        let transaction: Transaction | null = null;
         
         try {
             // Validate the request
-            await this.validateRequest(request);
+            const validationResult = await this.validateRequest(request);
+            if (!validationResult.success) {
+                return validationResult;
+            }
+            
+            // Get the network type (solana or traditional)
             const network = this.determinePaymentNetwork(request.currency);
-    
-            // Get or create wallets
-            const [fromWallet, toWallet] = await Promise.all([
-                this.ensureWallet(request.fromAddress, network),
-                this.ensureWallet(request.toAddress, network)
-            ]);
-    
-            // Create initial transaction record
+            
+            // Get wallet information
+            const fromWallet = await this.walletRepository.findByAddress(request.fromAddress);
+            const toWallet = await this.walletRepository.findByAddress(request.toAddress);
+            
+            if (!fromWallet || !toWallet) {
+                return createError(new InvalidAddressError('Invalid wallet address'));
+            }
+            
+            // Create transaction record
             transaction = await this.transactionRepository.createTransaction({
+                userId: request.userId || 'system', // Use provided userId or default to system
                 fromAddress: request.fromAddress,
                 toAddress: request.toAddress,
                 amount: request.amount,
@@ -59,10 +75,15 @@ export class PaymentService implements IPaymentProcessor {
                 network: network,
                 fromWalletId: fromWallet.id,
                 toWalletId: toWallet.id,
+                type: TransactionType.CRYPTO_PAYMENT, // Default to crypto payment type
                 status: TransactionStatus.PENDING,
-                metadata: {}
+                metadata: request.metadata || {}
             });
     
+            if (!transaction) {
+                return createError(new PaymentError('TRANSACTION_CREATION_FAILED', 'Failed to create transaction record'));
+            }
+            
             if (network === 'solana') {
                 const swapResult = await this.handleSolanaPayment(transaction);
                 if (!swapResult.success) {
@@ -85,70 +106,38 @@ export class PaymentService implements IPaymentProcessor {
             return createSuccess(response);
         } catch (error) {
             if (error instanceof PaymentError) {
-                if (transaction?.id) {
+                this.logger.error(`Payment error: ${error.message}`);
+                
+                // Update transaction status if it was created
+                if (transaction) {
                     await this.transactionRepository.updateTransactionStatus(
                         transaction.id,
                         TransactionStatus.FAILED,
                         {
                             failureReason: error.code,
-                            errorDetails: error.details
+                            errorDetails: error.message
                         }
                     );
                 }
+                
                 return createError(error);
             }
-    
-            return createError(new PaymentError(
-                error instanceof Error ? error.message : 'Unknown error occurred',
-                'PAYMENT_PROCESSING_ERROR'
-            ));
-        }
-    }
-
-    private async handleSolanaPayment(transaction: Transaction): Promise<Result<SwapResult, PaymentError>> {
-        try {
-            // Get swap quote
-            const quoteResult = await this.solanaService.getSwapQuote(
-                transaction.currency,
-                transaction.currency, // Target currency (same for direct transfers)
-                transaction.amount
-            );
-
-            if (!quoteResult.success) {
-                throw quoteResult.error;
+            
+            this.logger.error(`Unhandled payment error: ${error instanceof Error ? error.message : String(error)}`);
+            
+            // Update transaction status if it was created
+            if (transaction) {
+                await this.transactionRepository.updateTransactionStatus(
+                    transaction.id,
+                    TransactionStatus.FAILED,
+                    {
+                        failureReason: 'PAYMENT_FAILED',
+                        errorDetails: error instanceof Error ? error.message : String(error)
+                    }
+                );
             }
-
-            // Execute the swap
-            const swapResult = await this.solanaService.executeSwap(
-                quoteResult.data.id,
-                transaction.fromAddress
-            );
-
-            if (!swapResult.success) {
-                throw swapResult.error;
-            }
-
-            // Update transaction status
-            await this.transactionRepository.updateTransactionStatus(
-                transaction.id,
-                this.mapSolanaStatus(swapResult.data.status),
-                {
-                    swapDetails: swapResult.data,
-                    quoteId: quoteResult.data.id,
-                    processedAt: new Date()
-                }
-            );
-
-            return swapResult;
-        } catch (error) {
-            if (error instanceof PaymentError) {
-                throw error;
-            }
-            throw new PaymentError(
-                error instanceof Error ? error.message : 'Solana payment failed',
-                'SOLANA_PAYMENT_ERROR',
-                { originalError: error }
-            );
+            
+            return createError(new PaymentError('PAYMENT_FAILED', error instanceof Error ? error.message : 'Unknown error'));
         }
     }
 
@@ -197,7 +186,7 @@ export class PaymentService implements IPaymentProcessor {
         }
     }
 
-    private async validateRequest(request: PaymentRequest): Promise<void> {
+    private async validateRequest(request: PaymentRequest): Promise<Result<boolean, PaymentError>> {
         try {
             // Basic validation
             if (!request.fromAddress || !request.toAddress) {
@@ -242,27 +231,76 @@ export class PaymentService implements IPaymentProcessor {
         } catch (error) {
             // Pass through our custom errors
             if (error instanceof PaymentError) {
-                throw error;
+                return createError(error);
             }
 
             // Handle other errors
             if (error instanceof Error) {
                 if (error.message.includes('invalid address')) {
-                    throw new InvalidAddressError('Invalid address provided', {
+                    return createError(new InvalidAddressError('Invalid address provided', {
                         originalError: error.message
-                    });
+                    }));
                 }
                 
-                throw new PaymentError(
+                return createError(new PaymentError(
                     error.message,
                     'VALIDATION_ERROR',
                     { originalError: error }
-                );
+                ));
             }
 
-            throw new PaymentError(
+            return createError(new PaymentError(
                 'An unknown error occurred during validation',
                 'UNKNOWN_ERROR',
+                { originalError: error }
+            ));
+        }
+
+        return createSuccess(true);
+    }
+
+    private async handleSolanaPayment(transaction: Transaction): Promise<Result<SwapResult, PaymentError>> {
+        try {
+            // Get swap quote
+            const quoteResult = await this.solanaService.getSwapQuote(
+                transaction.currency,
+                transaction.currency, // Target currency (same for direct transfers)
+                transaction.amount
+            );
+
+            if (!quoteResult.success) {
+                throw quoteResult.error;
+            }
+
+            // Execute the swap
+            const swapResult = await this.solanaService.executeSwap(
+                quoteResult.data.id,
+                transaction.fromAddress
+            );
+
+            if (!swapResult.success) {
+                throw swapResult.error;
+            }
+
+            // Update transaction status
+            await this.transactionRepository.updateTransactionStatus(
+                transaction.id,
+                this.mapSolanaStatus(swapResult.data.status),
+                {
+                    swapDetails: swapResult.data,
+                    quoteId: quoteResult.data.id,
+                    processedAt: new Date()
+                }
+            );
+
+            return swapResult;
+        } catch (error) {
+            if (error instanceof PaymentError) {
+                throw error;
+            }
+            throw new PaymentError(
+                error instanceof Error ? error.message : 'Solana payment failed',
+                'SOLANA_PAYMENT_ERROR',
                 { originalError: error }
             );
         }

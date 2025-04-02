@@ -1,11 +1,23 @@
 // apps/backend/src/services/core/fiat/FiatBridgeService.ts
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { Logger } from '../../../utils/logger';
 import { Result, createSuccess, createError } from '../../../utils/result';
 import { PaymentError } from '../payment/errors/PaymentErrors';
 import { TransactionStatus } from '../../../types';
 import { IRateService } from './interfaces/rate.interface';
+import { PaymentProcessorRegistry } from './payment-processor-registry.service';
+import { 
+  IPaymentProcessor, 
+  InitiatePaymentParams, 
+  ProcessorTransactionDetails, 
+  CheckPaymentStatusParams 
+} from './interfaces/payment-processor.interface';
+import { v4 as uuidv4 } from 'uuid';
+import { 
+  TransactionTrackingService, 
+  TransactionType 
+} from '../payment/transaction-tracking.service';
 
 export interface ConversionQuote {
     id: string;
@@ -30,9 +42,19 @@ export interface ConversionResult {
     timestamp: Date;
 }
 
+export interface FiatPaymentRequest {
+    userId: string; 
+    amount: number;
+    currency: string;
+    sourceId: string;
+    description?: string;
+    metadata?: Record<string, any>;
+    preferredProcessor?: string;
+}
+
 export interface BridgeConfig {
     feePercentage: number;
-    quoteValidityDuration: number; // in milliseconds
+    quoteValidityDuration: number; 
     minAmount: Record<string, number>;
     maxAmount: Record<string, number>;
     supportedPairs: Array<{
@@ -48,12 +70,16 @@ export class FiatBridgeService {
     private activeQuotes: Map<string, ConversionQuote> = new Map();
     private config: BridgeConfig;
 
-    constructor(private rateService: IRateService) {
+    constructor(
+        @Inject('RATE_SERVICE') private rateService: IRateService,
+        private processorRegistry: PaymentProcessorRegistry,
+        private transactionTrackingService: TransactionTrackingService
+    ) {
         this.logger = new Logger('FiatBridgeService');
         
         this.config = {
-            feePercentage: 0.01, // 1%
-            quoteValidityDuration: 30000, // 30 seconds
+            feePercentage: 0.01, 
+            quoteValidityDuration: 30000, 
             minAmount: {
                 'USD': 10,
                 'USDC': 10
@@ -129,7 +155,8 @@ export class FiatBridgeService {
     }
 
     async executeConversion(
-        quoteId: string
+        quoteId: string,
+        userId: string 
     ): Promise<Result<ConversionResult, PaymentError>> {
         try {
             const quote = this.activeQuotes.get(quoteId);
@@ -147,17 +174,63 @@ export class FiatBridgeService {
                 );
             }
 
-            // Execute the conversion
+            const conversionId = this.generateConversionId();
+            
+            const transactionResult = await this.transactionTrackingService.createTransaction({
+                userId,
+                amount: quote.fromAmount,
+                currency: quote.fromCurrency,
+                type: TransactionType.FIAT_TO_CRYPTO, 
+                status: TransactionStatus.PENDING,
+                metadata: {
+                    quoteId,
+                    targetCurrency: quote.toCurrency,
+                    targetAmount: quote.toAmount,
+                    exchangeRate: quote.exchangeRate,
+                    fee: quote.fee
+                }
+            });
+
+            if (!transactionResult.success) {
+                throw transactionResult.error;
+            }
+
             const result: ConversionResult = {
-                id: this.generateConversionId(),
+                id: conversionId,
                 quote,
-                status: TransactionStatus.COMPLETED,
-                fromTxHash: `mock_from_tx_${Date.now()}`,
-                toTxHash: `mock_to_tx_${Date.now()}`,
+                status: TransactionStatus.PENDING,
                 timestamp: new Date()
             };
 
-            // Remove quote after execution
+            setTimeout(async () => {
+                try {
+                    const success = Math.random() < 0.95;
+                    
+                    if (success) {
+                        await this.transactionTrackingService.updateTransactionStatus({
+                            transactionId: transactionResult.data.id,
+                            status: TransactionStatus.COMPLETED,
+                            reason: 'Conversion completed successfully',
+                            metadata: {
+                                fromTxHash: `mock_from_tx_${Date.now()}`,
+                                toTxHash: `mock_to_tx_${Date.now()}`
+                            }
+                        });
+                    } else {
+                        await this.transactionTrackingService.updateTransactionStatus({
+                            transactionId: transactionResult.data.id,
+                            status: TransactionStatus.FAILED,
+                            reason: 'Conversion failed due to insufficient liquidity',
+                            metadata: {
+                                error: 'INSUFFICIENT_LIQUIDITY'
+                            }
+                        });
+                    }
+                } catch (error) {
+                    this.logger.error(`Error updating conversion transaction: ${error}`);
+                }
+            }, 5000); 
+
             this.activeQuotes.delete(quoteId);
 
             return createSuccess(result);
@@ -170,6 +243,223 @@ export class FiatBridgeService {
                 'CONVERSION_EXECUTION_ERROR'
             ));
         }
+    }
+
+    async initiateFiatPayment(
+        request: FiatPaymentRequest
+    ): Promise<Result<ProcessorTransactionDetails, PaymentError>> {
+        try {
+            this.validateAmount(request.currency, request.amount);
+            
+            const processorResult = await this.processorRegistry.getBestProcessorForCurrency(
+                request.currency,
+                request.amount,
+                request.preferredProcessor
+            );
+            
+            if (!processorResult.success) {
+                return createError(processorResult.error);
+            }
+            
+            const processor = processorResult.data;
+            this.logger.info(`Selected processor ${processor.processorName} for payment in ${request.currency}`);
+            
+            const transactionResult = await this.transactionTrackingService.createTransaction({
+                userId: request.userId,
+                amount: request.amount,
+                currency: request.currency,
+                type: TransactionType.FIAT_PAYMENT,
+                status: TransactionStatus.PENDING,
+                sourceId: request.sourceId,
+                processorName: processor.processorName,
+                metadata: {
+                    ...request.metadata,
+                    description: request.description
+                }
+            });
+
+            if (!transactionResult.success) {
+                return createError(transactionResult.error);
+            }
+
+            const transaction = transactionResult.data;
+            
+            const paymentParams: InitiatePaymentParams = {
+                amount: request.amount,
+                currency: request.currency,
+                sourceId: request.sourceId,
+                metadata: {
+                    ...request.metadata,
+                    description: request.description,
+                    internalTransactionId: transaction.id
+                },
+                idempotencyKey: uuidv4()
+            };
+            
+            const paymentResult = await processor.initiatePayment(paymentParams);
+            
+            if (!paymentResult.success) {
+                await this.transactionTrackingService.updateTransactionStatus({
+                    transactionId: transaction.id,
+                    status: TransactionStatus.FAILED,
+                    reason: paymentResult.error.message,
+                    metadata: {
+                        errorCode: paymentResult.error.code
+                    }
+                });
+                
+                return createError(paymentResult.error);
+            }
+            
+            const paymentDetails = paymentResult.data;
+            
+            await this.transactionTrackingService.updateTransactionStatus({
+                transactionId: transaction.id,
+                status: TransactionStatus.PENDING, 
+                reason: 'Payment initiated with processor',
+                metadata: {
+                    processorTransactionId: paymentDetails.id,
+                    processorMetadata: paymentDetails.metadata
+                }
+            });
+            
+            return createSuccess(paymentDetails);
+        } catch (error) {
+            if (error instanceof PaymentError) {
+                return createError(error);
+            }
+            return createError(new PaymentError(
+                error instanceof Error ? error.message : 'Unknown error occurred',
+                'FIAT_PAYMENT_INITIATION_ERROR'
+            ));
+        }
+    }
+    
+    async checkFiatPaymentStatus(
+        paymentId: string,
+        processorName: string
+    ): Promise<Result<ProcessorTransactionDetails, PaymentError>> {
+        try {
+            const processorResult = this.processorRegistry.getProcessor(processorName);
+            
+            if (!processorResult.success) {
+                return createError(processorResult.error);
+            }
+            
+            const processor = processorResult.data;
+            
+            const statusResult = await processor.checkPaymentStatus({ paymentId });
+            
+            if (!statusResult.success) {
+                return createError(statusResult.error);
+            }
+
+            try {
+                const transactionResult = await this.transactionTrackingService.getTransactionByProcessorId(
+                    processorName,
+                    paymentId
+                );
+                
+                if (transactionResult.success) {
+                    const transaction = transactionResult.data;
+                    const paymentStatus = statusResult.data;
+                    
+                    if (paymentStatus.status === 'completed' && transaction.status !== TransactionStatus.COMPLETED) {
+                        await this.transactionTrackingService.updateTransactionStatus({
+                            transactionId: transaction.id,
+                            status: TransactionStatus.COMPLETED,
+                            reason: 'Payment completed at processor',
+                            metadata: {
+                                processorDetails: paymentStatus
+                            }
+                        });
+                    } else if (paymentStatus.status === 'failed' && transaction.status !== TransactionStatus.FAILED) {
+                        await this.transactionTrackingService.updateTransactionStatus({
+                            transactionId: transaction.id,
+                            status: TransactionStatus.FAILED,
+                            reason: paymentStatus.errorMessage || 'Payment failed at processor',
+                            metadata: {
+                                processorDetails: paymentStatus
+                            }
+                        });
+                    }
+                }
+            } catch (error) {
+                this.logger.error(`Error updating transaction status: ${error}`);
+            }
+            
+            return createSuccess(statusResult.data);
+        } catch (error) {
+            if (error instanceof PaymentError) {
+                return createError(error);
+            }
+            return createError(new PaymentError(
+                error instanceof Error ? error.message : 'Unknown error occurred',
+                'FIAT_PAYMENT_STATUS_CHECK_ERROR'
+            ));
+        }
+    }
+    
+    async cancelFiatPayment(
+        paymentId: string,
+        processorName: string
+    ): Promise<Result<boolean, PaymentError>> {
+        try {
+            const processorResult = this.processorRegistry.getProcessor(processorName);
+            
+            if (!processorResult.success) {
+                return createError(processorResult.error);
+            }
+            
+            const processor = processorResult.data;
+            
+            if (!processor.cancelPayment) {
+                return createError(new PaymentError(
+                    `Processor ${processorName} does not support payment cancellation`,
+                    'CANCELLATION_NOT_SUPPORTED'
+                ));
+            }
+            
+            const cancelResult = await processor.cancelPayment(paymentId);
+            
+            if (!cancelResult.success) {
+                return createError(cancelResult.error);
+            }
+
+            try {
+                const transactionResult = await this.transactionTrackingService.getTransactionByProcessorId(
+                    processorName,
+                    paymentId
+                );
+                
+                if (transactionResult.success) {
+                    await this.transactionTrackingService.updateTransactionStatus({
+                        transactionId: transactionResult.data.id,
+                        status: TransactionStatus.CANCELLED,
+                        reason: 'Payment cancelled by user',
+                        metadata: {
+                            cancelledAt: new Date().toISOString()
+                        }
+                    });
+                }
+            } catch (error) {
+                this.logger.error(`Error updating transaction status after cancellation: ${error}`);
+            }
+            
+            return createSuccess(cancelResult.data);
+        } catch (error) {
+            if (error instanceof PaymentError) {
+                return createError(error);
+            }
+            return createError(new PaymentError(
+                error instanceof Error ? error.message : 'Unknown error occurred',
+                'FIAT_PAYMENT_CANCELLATION_ERROR'
+            ));
+        }
+    }
+    
+    getAvailableProcessors(): string[] {
+        return this.processorRegistry.getAllProcessors().map(p => p.processorName);
     }
 
     private validateCurrencyPair(fromCurrency: string, toCurrency: string): void {
@@ -189,14 +479,14 @@ export class FiatBridgeService {
         const min = this.config.minAmount[currency];
         const max = this.config.maxAmount[currency];
 
-        if (amount < min) {
+        if (min !== undefined && amount < min) {
             throw new PaymentError(
                 `Amount below minimum for ${currency}: ${min}`,
                 'AMOUNT_BELOW_MINIMUM'
             );
         }
 
-        if (amount > max) {
+        if (max !== undefined && amount > max) {
             throw new PaymentError(
                 `Amount above maximum for ${currency}: ${max}`,
                 'AMOUNT_ABOVE_MAXIMUM'
@@ -204,29 +494,26 @@ export class FiatBridgeService {
         }
     }
 
-    private async findConversionPath(
-        fromCurrency: string,
-        toCurrency: string
-    ): Promise<string[]> {
+    private async findConversionPath(fromCurrency: string, toCurrency: string): Promise<string[]> {
         const pair = this.config.supportedPairs.find(
             p => p.from === fromCurrency && p.to === toCurrency
         );
 
-        if (!pair) {
-            throw new PaymentError(
-                `No conversion path found for ${fromCurrency} to ${toCurrency}`,
-                'PATH_NOT_FOUND'
-            );
+        if (pair) {
+            return pair.path;
         }
 
-        return pair.path;
+        throw new PaymentError(
+            `No conversion path found for ${fromCurrency} to ${toCurrency}`,
+            'NO_CONVERSION_PATH'
+        );
     }
 
     private generateQuoteId(): string {
-        return `quote_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return `quote_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     }
 
     private generateConversionId(): string {
-        return `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return `conv_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     }
 }

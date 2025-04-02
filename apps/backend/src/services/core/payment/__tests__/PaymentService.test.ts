@@ -4,7 +4,7 @@ import { PaymentService } from '../PaymentService';
 import { TransactionRepository } from '../../../../db/repositories/transaction.repository';
 import { WalletRepository } from '../../../../db/repositories/wallet.repository';
 import { WalletBalanceRepository } from '../../../../db/repositories/wallet-balance.repository';
-import { TransactionStatus } from '../../../../types';
+import { TransactionStatus } from '../../../../common/types/transaction.types';
 import { 
     PaymentError, 
     InsufficientFundsError,
@@ -12,6 +12,7 @@ import {
 } from '../errors/PaymentErrors';
 import { Transaction } from '../../../../db/models/transaction.entity';
 import { Wallet } from '../../../../db/models/wallet.entity';
+import { TransactionType } from '../../../../db/models/transaction.entity';
 
 describe('PaymentService', () => {
     let paymentService: PaymentService;
@@ -58,7 +59,7 @@ describe('PaymentService', () => {
         const mockWallet: Wallet = {
             id: 'wallet-id',
             address: 'valid-from-address',
-            userId: null,
+            userId: 'test-user-id',
             metadata: {},
             isActive: true,
             balance: 200,
@@ -70,6 +71,7 @@ describe('PaymentService', () => {
         };
 
         const validRequest = {
+            userId: 'test-user-id',
             fromAddress: mockWallet.address,
             toAddress: 'valid-to-address',
             amount: 100,
@@ -78,6 +80,7 @@ describe('PaymentService', () => {
 
         const mockTransaction: Transaction = {
             id: 'test-tx-id',
+            userId: 'test-user-id',
             fromAddress: validRequest.fromAddress,
             toAddress: validRequest.toAddress,
             amount: validRequest.amount,
@@ -88,8 +91,14 @@ describe('PaymentService', () => {
             metadata: {},
             fromWallet: mockWallet,
             toWallet: mockWallet,
+            type: TransactionType.CRYPTO_PAYMENT,
+            statusHistory: [],
             createdAt: new Date(),
-            updatedAt: new Date()
+            updatedAt: new Date(),
+            sourceId: 'source-1',
+            destinationId: 'destination-1',
+            processorName: 'mock-processor',
+            processorTransactionId: 'mock-tx-id'
         };
 
         it('should successfully process a valid Solana payment', async () => {
@@ -170,7 +179,7 @@ describe('PaymentService', () => {
         const mockWallet: Wallet = {
             id: 'wallet-id',
             address: 'test-address',
-            userId: null,
+            userId: 'test-user-id',
             metadata: {},
             isActive: true,
             balance: 0,
@@ -183,18 +192,25 @@ describe('PaymentService', () => {
 
         const mockTransaction: Transaction = {
             id: 'existing-tx',
+            userId: 'test-user-id',
             status: TransactionStatus.COMPLETED,
             fromAddress: 'addr1',
             toAddress: 'addr2',
-            amount: 100,
+            amount: 50,
             currency: 'SOL',
             timestamp: new Date(),
             network: 'solana',
             metadata: {},
             fromWallet: mockWallet,
             toWallet: mockWallet,
+            type: TransactionType.CRYPTO_PAYMENT,
+            statusHistory: [],
             createdAt: new Date(),
-            updatedAt: new Date()
+            updatedAt: new Date(),
+            sourceId: 'source-2',
+            destinationId: 'destination-2',
+            processorName: 'mock-processor',
+            processorTransactionId: 'mock-tx-id-2'
         };
 
         it('should return true for existing transaction', async () => {

@@ -17,6 +17,8 @@
         "@jup-ag/core": "^4.0.0-beta.17",
         "@nestjs/common": "^10.0.0",
         "@nestjs/core": "^10.0.0",
+        "@nestjs/config": "^3.1.1",
+        "@nestjs/schedule": "^4.0.0",
         "@nestjs/typeorm": "^11.0.0",
         "@pythnetwork/client": "^2.19.0",
         "@solana/web3.js": "^1.87.6",
@@ -28,13 +30,27 @@
         "mongoose": "^8.0.0",
         "pg": "^8.13.1",
         "redis": "^4.6.10",
-        "typeorm": "^0.3.20"
+        "typeorm": "^0.3.20",
+        "stripe": "^13.9.0",
+        "bs58": "^5.0.0",
+        "uuid": "^9.0.1",
+        "@types/uuid": "^9.0.7"
     },
     "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "start": "node dist/main.js",
+        "start:dev": "ts-node src/main.ts",
         "test": "jest --detectOpenHandles",
         "test:watch": "jest --watch --detectOpenHandles",
         "test:coverage": "jest --coverage --detectOpenHandles",
         "test:debug": "jest --detectOpenHandles --verbose",
-        "test:clear": "jest --clearCache && jest --detectOpenHandles"
+        "test:clear": "jest --clearCache && jest --detectOpenHandles",
+        "db:start": "docker-compose up -d postgres",
+        "db:stop": "docker-compose down",
+        "db:migrate": "node scripts/database-migration.js run",
+        "db:migrate:create": "node scripts/database-migration.js create",
+        "db:migrate:generate": "node scripts/database-migration.js generate",
+        "db:migrate:revert": "node scripts/database-migration.js revert",
+        "db:migrate:show": "node scripts/database-migration.js show"
     }
 }

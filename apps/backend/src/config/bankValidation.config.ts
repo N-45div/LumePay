@@ -1,7 +1,4 @@
-// apps/backend/src/config/bankValidation.config.ts
-
-import { registerAs } from '@nestjs/config';
-
+﻿import { registerAs } from '@nestjs/config';
 export default registerAs('bankValidation', () => ({
     apiKey: process.env.BANK_VALIDATION_API_KEY,
     apiUrl: process.env.BANK_VALIDATION_API_URL,

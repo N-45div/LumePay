@@ -1,6 +1,20 @@
 // apps/backend/src/utils/type-converters.ts
-import { Transaction as DomainTransaction } from '../types';
 import { Transaction as EntityTransaction } from '../db/models/transaction.entity';
+import { TransactionStatus } from '../common/types/transaction.types';
+
+// Since we don't have a separate domain Transaction type anymore,
+// we'll create interfaces for the conversion functions
+interface DomainTransaction {
+    id: string;
+    fromAddress: string;
+    toAddress: string;
+    amount: number;
+    currency: string;
+    status: TransactionStatus;
+    timestamp: Date;
+    network?: 'solana' | 'traditional';
+    metadata?: Record<string, any>;
+}
 
 export function toEntityTransaction(domainTx: DomainTransaction): Partial<EntityTransaction> {
     return {
@@ -24,7 +38,7 @@ export function toDomainTransaction(entityTx: EntityTransaction): DomainTransact
         amount: entityTx.amount,
         currency: entityTx.currency,
         status: entityTx.status,
-        timestamp: entityTx.timestamp,
+        timestamp: entityTx.timestamp || new Date(),
         network: entityTx.network,
         metadata: entityTx.metadata
     };

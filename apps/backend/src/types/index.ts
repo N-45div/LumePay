@@ -1,4 +1,8 @@
 // Types for core payment functionality
+import { TransactionStatus } from '../common/types/transaction.types';
+
+export { TransactionStatus };
+
 export interface Transaction {
     id: string;
     fromAddress: string;
@@ -9,14 +13,6 @@ export interface Transaction {
     timestamp: Date;
     network: 'solana' | 'traditional';
     metadata?: Record<string, any>;
-}
-
-export enum TransactionStatus {
-    PENDING = 'pending',
-    PROCESSING = 'processing',
-    COMPLETED = 'completed',
-    FAILED = 'failed',
-    UNKNOWN = 'unknown'
 }
 
 // Types for user management
