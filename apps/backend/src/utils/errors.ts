@@ -45,3 +45,9 @@ export class InternalServerError extends AppError {
     super(message, 500);
   }
 }
+
+export class BlockchainError extends AppError {
+  constructor(message: string = 'Blockchain operation failed') {
+    super(message, 502);
+  }
+}
