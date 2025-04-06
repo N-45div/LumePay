@@ -32,6 +32,54 @@ export interface TokenTransaction {
   fee?: number;
 }
 
+interface TokenInfo {
+  mint: string;
+  amount: string;
+  decimals: number;
+  uiAmount: number;
+  symbol?: string;
+  name?: string;
+  address?: string;
+}
+
+interface HeliusTransaction {
+  description: string;
+  type: string;
+  source: string;
+  fee: number;
+  signature: string;
+  slot: number;
+  timestamp: number;
+  tokenTransfers: {
+    fromUserAccount: string;
+    toUserAccount: string;
+    fromTokenAccount: string;
+    toTokenAccount: string;
+    tokenAmount: number;
+    mint: string;
+    tokenStandard: string;
+  }[];
+  nativeTransfers: {
+    fromUserAccount: string;
+    toUserAccount: string;
+    amount: number;
+  }[];
+  accountData: {
+    account: string;
+    nativeBalanceChange: number;
+    tokenBalanceChanges: {
+      userAccount: string;
+      tokenAccount: string;
+      mint: string;
+      rawTokenAmount: {
+        tokenAmount: string;
+        decimals: number;
+      };
+    }[];
+  }[];
+  events: Record<string, any>;
+}
+
 const STABLECOIN_MINTS = {
   [StablecoinType.USDC]: {
     mainnet: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
@@ -396,19 +444,10 @@ class StablecoinService {
       const mintAddress = this.getMintAddress(tokenSymbol);
       const url = `https://api.helius.xyz/v0/addresses/${walletAddress}/balances?api-key=${this.heliusApiKey}`;
       
-      interface HeliusBalanceResponse {
-        tokens?: Array<{
-          mint: string;
-          amount: string;
-          decimals: number;
-          address?: string;
-        }>;
-      }
+      const response = await axios.get<{ tokens: TokenInfo[] }>(url);
+      const tokens = response.data.tokens || [];
       
-      const response = await axios.get<HeliusBalanceResponse>(url);
-      const tokens = response.data?.tokens || [];
-      
-      const token = tokens.find((t) => t.mint === mintAddress);
+      const token = tokens.find((t: TokenInfo) => t.mint === mintAddress);
       
       if (!token) {
         return {
@@ -452,24 +491,15 @@ class StablecoinService {
       
       const url = `https://api.helius.xyz/v0/addresses/${walletAddress}/balances?api-key=${this.heliusApiKey}`;
       
-      interface HeliusBalanceResponse {
-        tokens?: Array<{
-          mint: string;
-          amount: string;
-          decimals: number;
-          address?: string;
-        }>;
-      }
-      
-      const response = await axios.get<HeliusBalanceResponse>(url);
-      const tokens = response.data?.tokens || [];
+      const response = await axios.get<{ tokens: TokenInfo[] }>(url);
+      const tokens = response.data.tokens || [];
       
       const supportedTokens = Object.values(StablecoinType);
       const balances: TokenBalance[] = [];
       
       for (const tokenSymbol of supportedTokens) {
         const mintAddress = this.getMintAddress(tokenSymbol);
-        const token = tokens.find((t) => t.mint === mintAddress);
+        const token = tokens.find((t: TokenInfo) => t.mint === mintAddress);
         
         if (token) {
           const amount = parseFloat(token.amount) / Math.pow(10, token.decimals);
@@ -529,73 +559,42 @@ class StablecoinService {
       
       const url = `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?${params}`;
       
-      interface HeliusTokenTransfer {
-        amount: number;
-        mint: string;
-        toUserAccount: string;
-        fromUserAccount: string;
-      }
-      
-      interface HeliusTransaction {
-        signature?: string;
-        id?: string;
-        sourceAddress?: string;
-        destinationAddress?: string;
-        amount?: number | string;
-        tokenSymbol?: string;
-        timestamp?: number;
-        status?: string;
-        blockHeight?: number;
-        slot?: number;
-        fee?: number | string;
-        tokenTransfers?: HeliusTokenTransfer[];
-        fromUserAccount?: string;
-      }
-      
       const response = await axios.get<HeliusTransaction[]>(url);
       const transactions = response.data || [];
       
-      return transactions.map((tx): TokenTransaction => {
+      return transactions.map((tx: HeliusTransaction): TokenTransaction => {
         let amount = 0;
         let destinationAddress = 'unknown';
         let actualTokenSymbol = tokenSymbol || StablecoinType.USDC;
         
-        if (tx.tokenTransfers && Array.isArray(tx.tokenTransfers) && tx.tokenTransfers.length > 0) {
-          const transfer = tx.tokenTransfers[0];
-          amount = typeof transfer.amount === 'number' ? transfer.amount : 0;
-          destinationAddress = transfer.toUserAccount || tx.destinationAddress || 'unknown';
+        // Process token transfers
+        if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+          const tokenTransfer = tx.tokenTransfers[0];
           
-          if (transfer.mint) {
-            for (const [symbol, addresses] of Object.entries(STABLECOIN_MINTS)) {
-              if (Object.values(addresses).includes(transfer.mint)) {
-                actualTokenSymbol = symbol as StablecoinType;
-                break;
-              }
-            }
+          // Determine the token symbol from the mint if not provided
+          if (!tokenSymbol) {
+            actualTokenSymbol = this.getTokenSymbolFromMint(tokenTransfer.mint) || StablecoinType.USDC;
           }
-        } else if (tx.amount) {
-          amount = typeof tx.amount === 'number' ? tx.amount : parseFloat(tx.amount as string) || 0;
-        }
-        
-        let txStatus: 'confirmed' | 'pending' | 'failed' = 'confirmed';
-        if (tx.status) {
-          if (tx.status.toLowerCase().includes('fail')) {
-            txStatus = 'failed';
-          } else if (tx.status.toLowerCase().includes('pend')) {
-            txStatus = 'pending';
+          
+          amount = tokenTransfer.tokenAmount;
+          
+          if (tokenTransfer.fromUserAccount === walletAddress) {
+            destinationAddress = tokenTransfer.toUserAccount;
+          } else if (tokenTransfer.toUserAccount === walletAddress) {
+            destinationAddress = tokenTransfer.fromUserAccount;
           }
         }
         
         return {
-          signature: tx.signature || tx.id || '',
-          from: tx.sourceAddress || tx.fromUserAccount || walletAddress,
+          signature: tx.signature,
+          from: tx.source,
           to: destinationAddress,
-          amount: amount,
+          amount,
           tokenSymbol: actualTokenSymbol,
-          timestamp: new Date(tx.timestamp ? tx.timestamp * 1000 : Date.now()),
-          status: txStatus,
-          blockHeight: tx.blockHeight || tx.slot || 0,
-          fee: typeof tx.fee === 'number' ? tx.fee / 1e9 : parseFloat(tx.fee as string || '0') / 1e9
+          timestamp: new Date(tx.timestamp * 1000), // Convert to Date
+          status: tx.type === 'TOKEN_TRANSFER' ? 'confirmed' : 'failed',
+          blockHeight: tx.slot,
+          fee: tx.fee / 1e9 // Convert from lamports to SOL
         };
       });
     } catch (error) {

@@ -2,6 +2,8 @@ import * as listingsRepository from '../db/listings.repository';
 import * as usersRepository from '../db/users.repository';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../utils/errors';
 import { Listing, ListingStatus } from '../types';
+import * as notificationsService from './notifications.service';
+import logger from '../utils/logger';
 
 export const createListing = async (
   sellerId: string,
@@ -17,11 +19,21 @@ export const createListing = async (
     throw new BadRequestError('Price must be greater than 0');
   }
   
-  return await listingsRepository.create({
+  const listing = await listingsRepository.create({
     ...listingData,
     sellerId,
     status: ListingStatus.ACTIVE
   });
+
+  logger.info(`New listing created: ${listing.id} by seller: ${sellerId}`);
+  
+  // Create notification for the seller
+  await notificationsService.createListingNotification(
+    sellerId,
+    `Your listing "${listing.title}" has been created successfully and is now active.`
+  );
+  
+  return listing;
 };
 
 export const getListingById = async (id: string): Promise<Listing> => {
@@ -75,6 +87,18 @@ export const updateListing = async (
     throw new NotFoundError('Listing not found');
   }
   
+  logger.info(`Listing updated: ${id} by seller: ${sellerId}`);
+  
+  // Create notification for the seller
+  let notificationMessage = `Your listing "${updatedListing.title}" has been updated successfully.`;
+  
+  // Add more specific details if price was changed
+  if (data.price !== undefined && data.price !== listing.price) {
+    notificationMessage = `Your listing "${updatedListing.title}" price has been updated from ${listing.price} to ${data.price} ${listing.currency}.`;
+  }
+  
+  await notificationsService.createListingNotification(sellerId, notificationMessage);
+  
   return updatedListing;
 };
 
@@ -98,6 +122,14 @@ export const deleteListing = async (id: string, sellerId: string): Promise<void>
   if (!deleted) {
     throw new NotFoundError('Listing not found');
   }
+  
+  logger.info(`Listing deleted: ${id} by seller: ${sellerId}`);
+  
+  // Create notification for the seller
+  await notificationsService.createListingNotification(
+    sellerId,
+    `Your listing "${listing.title}" has been deleted successfully.`
+  );
 };
 
 export const markListingAsSold = async (id: string, sellerId: string): Promise<Listing> => {
@@ -120,6 +152,14 @@ export const markListingAsSold = async (id: string, sellerId: string): Promise<L
   if (!updatedListing) {
     throw new NotFoundError('Listing not found');
   }
+  
+  logger.info(`Listing marked as sold: ${id} by seller: ${sellerId}`);
+  
+  // Create notification for the seller
+  await notificationsService.createListingNotification(
+    sellerId,
+    `Your listing "${listing.title}" has been marked as sold.`
+  );
   
   return updatedListing;
 };

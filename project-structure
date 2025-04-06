@@ -1,0 +1,99 @@
+Core Directory Structure:
+lumesquare/
+│
+├── .github/                  # GitHub workflows and templates
+│
+├── apps/                     # Monorepo structure for applications
+│   ├── backend/              # Backend application
+│   │   ├── src/
+│   │   │   ├── api/          # API endpoints, controllers, routes, middleware
+│   │   │   ├── blockchain/   # Blockchain integration services
+│   │   │   ├── config/       # Application configuration
+│   │   │   ├── db/           # Database entities, migrations, repositories
+│   │   │   ├── services/     # Business logic by domain
+│   │   │   ├── types/        # TypeScript type definitions
+│   │   │   ├── utils/        # Utility functions
+│   │   │   ├── app.ts        # Express app setup
+│   │   │   └── index.ts      # Application entry point
+│   │   ├── test/             # Backend tests
+│   │   └── scripts/          # Utility scripts
+│   │
+│   ├── frontend/             # Frontend application
+│   │   ├── public/           # Static assets
+│   │   ├── src/
+│   │   │   ├── components/   # UI components
+│   │   │   ├── pages/        # Page components
+│   │   │   ├── hooks/        # Custom React hooks
+│   │   │   ├── services/     # API integration
+│   │   │   ├── store/        # State management
+│   │   │   ├── utils/        # Utility functions
+│   │   │   └── styles/       # Global styles
+│   │   └── test/             # Frontend tests
+│   │
+│   ├── blockchain/           # Smart contract code
+│   │   ├── programs/         # Solana programs (escrow, listings, reputation)
+│   │   ├── app/              # Client library for contracts
+│   │   ├── tests/            # Contract tests
+│   │   └── scripts/          # Deployment & interaction scripts
+│   │
+│   └── sdk/                  # Rust SDK for P2P marketplaces
+│       ├── src/              # SDK source code
+│       │   ├── reputation/   # On-chain reputation module
+│       │   ├── escrow/       # Escrow management module
+│       │   ├── stablecoin/   # Stablecoin integration (Circle)
+│       │   ├── solana_pay/   # Solana Pay QR code module
+│       │   ├── dispute/      # Dispute resolution module
+│       │   ├── sidetrack/    # Sidetrack integration module
+│       │   └── lib.rs        # SDK entry point
+│       ├── examples/         # Example applications
+│       └── tests/            # SDK tests
+│
+├── infrastructure/           # Infrastructure configuration
+│   ├── terraform/            # Infrastructure as code
+│   ├── docker/               # Docker configurations
+│   └── k8s/                  # Kubernetes manifests
+│
+├── tools/                    # Development tools
+│   ├── load-testing/         # Performance testing
+│   ├── security/             # Security tools
+│   └── database/             # Database tools
+│
+├── docs/                     # Documentation
+│   ├── api/                  # API documentation
+│   ├── architecture/         # Architecture diagrams
+│   ├── blockchain/           # Blockchain documentation
+│   ├── sdk/                  # SDK documentation
+│   └── guides/               # Usage guides
+│
+└── [config files]            # Root config files (.gitignore, package.json, etc.)
+
+core Backend Structure (apps/backend/src/)
+api/: All API-related code (controllers, routes, middlewares)
+blockchain/: Smart contract interaction services
+db/: Database connectivity, entities, repositories
+services/: Core business logic organized by domain
+config/: Environment and application configuration
+
+Core SDK Structure (apps/sdk/)
+src/: SDK modules and core functionality
+reputation/: On-chain reputation verification
+escrow/: Escrow management functionality
+stablecoin/: Circle SDK integration
+solana_pay/: QR code generation and payment processing
+dispute/: Dispute resolution system
+sidetrack/: Performance optimization integration
+
+Core Smart Contract Structure (apps/blockchain/)
+programs/: Contains Solana programs for:
+Escrow management
+Marketplace listings
+User reputation system
+tests/: Contract testing
+scripts/: Deployment scripts
+
+Core Frontend Structure (apps/frontend/src/)
+components/: Reusable UI components
+pages/: Page-level components
+services/: API integration layer
+store/: State management
+hooks/: Custom React hooks

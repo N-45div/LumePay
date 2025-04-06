@@ -1,0 +1,294 @@
+Lumesquare: Stablecoin-Powered P2P Marketplace
+Official Project Documentation
+1. Executive Summary
+Lumesquare is a decentralized peer-to-peer marketplace built on Solana that leverages stablecoins and smart contracts to eliminate fraud, reduce disputes, and provide a secure trading environment where buyers and sellers can transact with confidence. The project provides a comprehensive Rust SDK that allows developers to build secure P2P marketplaces with built-in trust mechanisms.
+
+2. Problem Statement
+Current P2P Marketplace Challenges:
+Rampant Fraud: 1 in 6 Facebook Marketplace users report being scammed
+Payment Risk: Traditional payment methods have weak buyer/seller protections
+Trust Deficit: Limited verification of users' identities or item authenticity
+Dispute Resolution: Centralized, slow, and often biased mediation processes
+User Experience: Complex escrow solutions with high friction
+Platform Dependency: Users rely on centralized moderators for security
+Technical Barriers: Web3 solutions often require technical knowledge
+Market Opportunity:
+1B+ monthly shoppers use P2P marketplaces globally
+$2T in annual transactions flowing through P2P commerce channels
+30% of users avoid high-value P2P transactions due to security concerns
+Solana's low fees enable microtransactions that would be prohibitive on other chains
+3. Solution Overview
+Lumesquare eliminates fraud through an intuitive escrow system powered by smart contracts and stablecoins:
+
+Core Components:
+Trust-Optimized Escrow Protocol:
+Programmable release conditions
+Multi-signature protection for high-value items
+Progressive milestone releases for services
+Automated dispute resolution through timelock mechanics
+On-Chain Reputation System:
+Reputation scores as non-transferable tokens
+Transaction history verification
+"Proof of Good Standing" for repeat users
+Seamless UX Layer:
+Web2-like experience with Web3 security
+Mobile-first design
+Simplified wallet connection
+QR code transfers via Solana Pay
+Rust SDK for Marketplace Infrastructure:
+On-chain reputation system verifiability
+Stablecoin support via Circle SDK
+Transparent stablecoin balance (Helius API)
+QR code transfers via Solana Pay
+Escrow for dispute management
+Sidetrack integration for performance optimization
+Specialized APIs and Backend Services:
+Transaction monitoring and notification system
+Marketplace indexing and search optimization
+Analytics and risk scoring
+4. Technical Architecture
+Smart Contract Layer:
+EscrowCore.sol: Primary escrow mechanics
+ReputationManager.sol: Handles user trust scores
+ListingFactory.sol: Creates and manages marketplace listings
+DisputeResolver.sol: Handles conflicts between parties
+Rust SDK Layer:
+Reputation Module: On-chain verification of user reputation
+Escrow Module: Secure escrow management
+Stablecoin Module: Integration with Circle SDK
+Solana Pay Module: QR code generation for payments
+Dispute Module: Handling conflicts between parties
+Sidetrack Module: Performance optimization for high-throughput operations
+Backend Architecture (Our Focus):
+Node.js/Express API Layer:
+RESTful endpoints for marketplace interactions
+WebSocket services for real-time updates
+GraphQL API for flexible data queries
+SDK-friendly API interfaces
+Database Schema:
+PostgreSQL for relational data
+Redis for caching and real-time features
+Blockchain Integration Services:
+Transaction monitoring service
+Block indexing and event listeners
+State synchronization between chain and database
+Infrastructure:
+Containerized microservices (Docker)
+CI/CD pipeline
+Automated testing and deployment
+Frontend (To Be Developed):
+Next.js React application
+Responsive design with Tailwind CSS
+Wallet adapter integration
+5. Development Roadmap
+Phase 1: Foundation (Days 1-3)
+Backend Setup:
+Project scaffolding with TypeScript
+Database schema design
+Environment configuration
+Authentication flows
+Basic endpoint structure
+Smart Contract Development:
+Core escrow contract
+Unit tests for contract functions
+Local testnet deployment
+Phase 2: Core Features (Days 4-7)
+Backend Services:
+Listings API (CRUD operations)
+Transaction tracking service
+User reputation service
+Search and discovery API
+Notification system
+Blockchain Integration:
+Contract interaction service
+Transaction signing and verification
+Event listener implementation
+Phase 3: Advanced Features (Days 8-10)
+Rust SDK Development:
+Core SDK architecture
+Reputation module implementation
+Escrow module implementation
+Stablecoin integration with Circle
+Solana Pay QR code implementation
+Enhanced Backend Functionality:
+Dispute handling workflow
+API optimization and caching
+Analytics service
+Rate limiting and security hardening
+Smart Contract Extensions:
+Multi-party escrow
+Reputation token implementation
+Advanced dispute resolution
+Phase 4: Integration & Testing (Days 11-12)
+System Integration:
+Backend services integration
+Contract integration tests
+SDK integration with backend
+Performance optimization
+Security auditing
+Documentation:
+API documentation
+SDK documentation
+System architecture diagrams
+Deployment instructions
+Phase 5: Polish & Presentation (Days 13-14)
+Final Testing:
+End-to-end testing
+Security penetration testing
+Load testing
+SDK example applications
+Demo Preparation:
+Presentation materials
+Live demo scenarios
+Q&A preparation
+6. Development Rules & Best Practices
+Security Protocols:
+No Hardcoded Credentials:
+❌ const password = "secretPassword123"
+✅ const password = process.env.DB_PASSWORD
+Environment Variable Management:
+Use .env files for local development
+Never commit .env files to Git (.gitignore)
+Provide .env.example templates with dummy values
+Validate required environment variables on application startup
+Sensitive Data Handling:
+Never log sensitive information
+Use parameter binding for all SQL queries
+Implement proper input validation
+Authentication Best Practices:
+Use JWT with appropriate expiration
+Implement wallet signature verification
+Store only hashed data when needed
+Code Quality Standards:
+Typing and Interfaces:
+Use TypeScript interfaces for all data structures
+Avoid any type except where absolutely necessary
+Implement proper error types
+Error Handling:
+Implement global error handler
+Use custom error classes for different scenarios
+Provide meaningful error messages
+Testing Requirements:
+Minimum 80% test coverage for backend code
+Unit tests for all API endpoints
+Integration tests for critical flows
+Smart contract test coverage at 100%
+SDK test coverage at 100%
+Code Organization:
+Follow service/repository pattern
+Use dependency injection
+Implement middleware for cross-cutting concerns
+DevOps & Deployment:
+CI/CD Pipeline:
+Automated testing on pull requests
+Linting and type checking
+Security scanning
+Versioning:
+Semantic versioning for APIs
+Change logs for all releases
+Monitoring:
+Implement logging with structured format
+Set up health check endpoints
+Performance metrics collection
+7. Backend Development Focus
+As the backend team, your primary responsibilities will be:
+
+API Development:
+RESTful services for marketplace operations
+WebSocket implementation for real-time updates
+Authentication and authorization services
+Performance optimization and caching strategy
+SDK-friendly API interfaces
+Blockchain Integration:
+Smart contract interaction services
+Transaction signing and verification
+Block monitoring and event processing
+State synchronization between blockchain and database
+Database Management:
+Schema design and optimization
+Migration strategy
+Data consistency and backup procedures
+Query performance optimization
+Security Implementation:
+Input validation
+Rate limiting
+CORS and security headers
+Audit logging
+Backend Deliverables:
+Core API Services:
+User management API
+Listings management API
+Transaction processing service
+Search and discovery API
+SDK support services
+Blockchain Services:
+Contract interaction service
+Event listener service
+Transaction monitoring service
+Wallet integration service
+Infrastructure:
+Containerization configuration
+Database setup scripts
+Environment configuration
+Deployment documentation
+8. Avoiding Common Mistakes
+Security Mistakes to Avoid:
+❌ Hardcoding credentials or secrets
+❌ Committing .env files to the repository
+❌ Using inadequate input validation
+❌ Storing sensitive data in logs
+❌ Implementing custom encryption
+Architecture Mistakes to Avoid:
+❌ Monolithic design that's difficult to scale
+❌ Tightly coupled components
+❌ Insufficient error handling
+❌ Missing documentation
+❌ Ignoring performance considerations
+Code Quality Mistakes to Avoid:
+❌ Inconsistent naming conventions
+❌ Lack of typing (using 'any' excessively)
+❌ No automated tests
+❌ Copy-pasting code instead of refactoring
+❌ Insufficient error handling
+Blockchain-Specific Mistakes to Avoid:
+❌ Not handling failed transactions
+❌ Ignoring gas costs and optimization
+❌ Missing event listeners
+❌ Insufficient contract testing
+❌ Not validating contract interactions
+9. Key Metrics & Success Criteria
+Technical Success Metrics:
+API response time under 100ms for 95% of requests
+99.9% uptime for backend services
+Zero critical security vulnerabilities
+Test coverage above 80%
+SDK Documentation coverage at 100%
+Demo Success Criteria:
+Complete transaction flow works end-to-end
+Escrow contract functions demonstrably secure
+UI/UX intuitive enough for non-technical users
+SDK example application demonstrates core functionality
+Differentiated features clearly demonstrated
+Hackathon Judging Considerations:
+Technical innovation and implementation quality
+Problem-solution fit and market potential
+User experience and design
+Presentation quality and demonstration
+Overall impact and vision
+10. Team Organization
+Backend Team Focus:
+API Lead: Responsible for core service development
+Blockchain Integration Lead: Focuses on smart contract interaction
+Database Specialist: Handles data modeling and optimization
+Security Engineer: Ensures secure coding practices
+SDK Team Focus:
+Rust Developer: Core SDK implementation
+Integration Specialist: Ensures SDK works with backend
+Documentation Lead: Creates comprehensive SDK docs
+Examples Developer: Builds sample applications
+Collaboration Workflow:
+Daily standups (15 minutes)
+Code reviews for all pull requests
+Documentation updates with each feature
+Continuous integration with frontend team
+This comprehensive project plan provides the foundation for building Lumesquare, a revolutionary P2P marketplace SDK that brings Web3 security to everyday transactions. By focusing on backend excellence, smart contract integration, and a powerful Rust SDK, we'll create a platform that eliminates fraud while maintaining the simplicity users expect from modern applications.

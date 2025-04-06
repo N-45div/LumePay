@@ -5,6 +5,7 @@ import { EscrowService as BlockchainEscrowService } from '../blockchain/escrow';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../utils/errors';
 import { Escrow, EscrowStatus, ListingStatus } from '../types';
 import logger from '../utils/logger';
+import * as notificationsService from './notifications.service';
 
 const blockchainEscrowService = new BlockchainEscrowService();
 
@@ -53,6 +54,17 @@ export const createEscrow = async (
   });
   
   logger.info(`Escrow created: ${escrow.id} for listing: ${listingId}`);
+  
+  // Create notifications for both buyer and seller
+  await notificationsService.createEscrowNotification(
+    buyerId,
+    `You have created an escrow for ${listing.title} of ${escrow.amount} ${escrow.currency}`
+  );
+  
+  await notificationsService.createEscrowNotification(
+    seller.id,
+    `${buyer.username || 'A buyer'} has initiated an escrow purchase for your listing: ${listing.title}`
+  );
   
   return escrow;
 };
@@ -111,6 +123,26 @@ export const fundEscrow = async (id: string, buyerId: string, buyerPrivateKey: s
   
   logger.info(`Escrow funded: ${id} with transaction: ${fundResult.transactionSignature}`);
   
+  // Get the listing details if available
+  let listingTitle = "your purchase";
+  if (escrow.listingId) {
+    const listing = await listingsRepository.findById(escrow.listingId);
+    if (listing) {
+      listingTitle = listing.title;
+    }
+  }
+  
+  // Create notifications for both buyer and seller
+  await notificationsService.createTransactionNotification(
+    buyerId,
+    `You have successfully funded the escrow for ${listingTitle} with ${escrow.amount} ${escrow.currency}`
+  );
+  
+  await notificationsService.createTransactionNotification(
+    escrow.sellerId,
+    `The escrow for ${listingTitle} has been funded by the buyer and is awaiting your confirmation`
+  );
+  
   return updatedEscrow;
 };
 
@@ -144,11 +176,28 @@ export const releaseEscrow = async (id: string, sellerId: string): Promise<Escro
     throw new NotFoundError('Escrow not found');
   }
   
+  // Get the listing details if available
+  let listingTitle = "your purchase";
   if (escrow.listingId) {
-    await listingsRepository.update(escrow.listingId, { status: ListingStatus.SOLD });
+    const listing = await listingsRepository.findById(escrow.listingId);
+    if (listing) {
+      listingTitle = listing.title;
+      await listingsRepository.update(escrow.listingId, { status: ListingStatus.SOLD });
+    }
   }
   
   logger.info(`Escrow released: ${id} with transaction: ${releaseResult.transactionSignature}`);
+  
+  // Create notifications for both buyer and seller
+  await notificationsService.createTransactionNotification(
+    escrow.buyerId,
+    `The transaction for ${listingTitle} has been completed. The funds have been released to the seller.`
+  );
+  
+  await notificationsService.createTransactionNotification(
+    sellerId,
+    `You have released the escrow for ${listingTitle}. The funds have been transferred to your wallet.`
+  );
   
   return updatedEscrow;
 };
@@ -183,7 +232,27 @@ export const refundEscrow = async (id: string, sellerId: string): Promise<Escrow
     throw new NotFoundError('Escrow not found');
   }
   
+  // Get the listing details if available
+  let listingTitle = "your purchase";
+  if (escrow.listingId) {
+    const listing = await listingsRepository.findById(escrow.listingId);
+    if (listing) {
+      listingTitle = listing.title;
+    }
+  }
+  
   logger.info(`Escrow refunded: ${id} with transaction: ${refundResult.transactionSignature}`);
+  
+  // Create notifications for both buyer and seller
+  await notificationsService.createTransactionNotification(
+    escrow.buyerId,
+    `The seller has refunded your escrow for ${listingTitle}. The funds have been returned to your wallet.`
+  );
+  
+  await notificationsService.createTransactionNotification(
+    sellerId,
+    `You have refunded the escrow for ${listingTitle}. The funds have been returned to the buyer.`
+  );
   
   return updatedEscrow;
 };

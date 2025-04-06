@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { NotFoundError, UnauthorizedError } from '../../utils/errors';
+import * as notificationsService from '../../services/notifications.service';
 
 /**
  * Get all notifications for a user
@@ -11,25 +12,7 @@ export const getNotifications = async (req: Request, res: Response, next: NextFu
     }
     
     const userId = req.user.userId;
-    
-    const notifications = [
-      {
-        id: '1',
-        userId,
-        type: 'TRANSACTION',
-        message: 'Your escrow transaction has been completed',
-        isRead: false,
-        createdAt: new Date(Date.now() - 3600000)
-      },
-      {
-        id: '2',
-        userId,
-        type: 'SYSTEM',
-        message: 'Welcome to Lumesquare P2P marketplace',
-        isRead: true,
-        createdAt: new Date(Date.now() - 86400000)
-      }
-    ];
+    const notifications = await notificationsService.getNotifications(userId);
 
     res.status(200).json({
       success: true,
@@ -49,7 +32,8 @@ export const getNotificationCount = async (req: Request, res: Response, next: Ne
       throw new UnauthorizedError('User not authenticated');
     }
     
-    const count = 1;
+    const userId = req.user.userId;
+    const count = await notificationsService.getUnreadCount(userId);
 
     res.status(200).json({
       success: true,
@@ -69,11 +53,10 @@ export const markAsRead = async (req: Request, res: Response, next: NextFunction
       throw new UnauthorizedError('User not authenticated');
     }
     
+    const userId = req.user.userId;
     const { id } = req.params;
     
-    if (id !== '1' && id !== '2') {
-      throw new NotFoundError(`Notification with id ${id} not found`);
-    }
+    await notificationsService.markAsRead(id, userId);
 
     res.status(200).json({
       success: true,
@@ -92,6 +75,9 @@ export const markAllAsRead = async (req: Request, res: Response, next: NextFunct
     if (!req.user) {
       throw new UnauthorizedError('User not authenticated');
     }
+    
+    const userId = req.user.userId;
+    await notificationsService.markAllAsRead(userId);
     
     res.status(200).json({
       success: true,

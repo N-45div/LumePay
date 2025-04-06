@@ -69,6 +69,15 @@ export interface Dispute {
   updatedAt: Date;
 }
 
+export interface Notification {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  message: string;
+  isRead: boolean;
+  createdAt: Date;
+}
+
 export enum ListingStatus {
   ACTIVE = 'active',
   SOLD = 'sold',
@@ -106,6 +115,14 @@ export enum DisputeStatus {
   RESOLVED_SELLER = 'resolved_seller',
   RESOLVED_SPLIT = 'resolved_split',
   CLOSED = 'closed'
+}
+
+export enum NotificationType {
+  TRANSACTION = 'transaction',
+  ESCROW = 'escrow',
+  LISTING = 'listing',
+  SYSTEM = 'system',
+  DISPUTE = 'dispute'
 }
 
 export interface JwtPayload {

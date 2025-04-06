@@ -3,6 +3,8 @@ import config from './config';
 import logger from './utils/logger';
 import { connectRedis } from './utils/redis';
 import { runMigrations } from './db/migrations';
+import { WebSocketService } from './services/websocket.service';
+import { createServer } from 'http';
 
 const startServer = async () => {
   try {
@@ -20,20 +22,29 @@ const startServer = async () => {
       logger.warn('Redis connection failed - proceeding with limited functionality');
     }
     
-    const server = app.listen(config.server.port, () => {
+    // Create HTTP server
+    const httpServer = createServer(app);
+    
+    // Initialize WebSocket service
+    logger.info('Initializing WebSocket service...');
+    const wsService = WebSocketService.getInstance();
+    wsService.initialize(httpServer);
+    
+    // Start the server
+    httpServer.listen(config.server.port, () => {
       logger.info(`Server running in ${config.server.env} mode on port ${config.server.port}`);
     });
 
     process.on('unhandledRejection', (err) => {
       logger.error('Unhandled rejection:', err);
-      server.close(() => {
+      httpServer.close(() => {
         process.exit(1);
       });
     });
 
     process.on('SIGTERM', () => {
       logger.info('SIGTERM received. Shutting down gracefully');
-      server.close(() => {
+      httpServer.close(() => {
         logger.info('Process terminated');
       });
     });
