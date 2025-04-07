@@ -134,6 +134,25 @@ export async function findAll(
   };
 }
 
+/**
+ * Get the total count of disputes
+ */
+export async function getTotalCount(): Promise<number> {
+  const result = await query(`SELECT COUNT(*) FROM disputes`);
+  return parseInt(result.rows[0].count, 10);
+}
+
+/**
+ * Get the count of disputes with a specific status
+ */
+export async function getCountByStatus(status: DisputeStatus): Promise<number> {
+  const result = await query(
+    `SELECT COUNT(*) FROM disputes WHERE status = $1`,
+    [status]
+  );
+  return parseInt(result.rows[0].count, 10);
+}
+
 function mapRowToDispute(row: any): Dispute {
   return {
     id: row.id,

@@ -125,6 +125,73 @@ export const updateStatus = async (
   return mapDbEscrowToEscrow(result.rows[0]);
 };
 
+/**
+ * Get total count of all escrows
+ */
+export const getTotalCount = async (): Promise<number> => {
+  const result = await query(`SELECT COUNT(*) FROM escrows`);
+  return parseInt(result.rows[0].count, 10);
+};
+
+/**
+ * Get count of escrows with a specific status
+ */
+export const getCountByStatus = async (status: EscrowStatus): Promise<number> => {
+  const result = await query(
+    `SELECT COUNT(*) FROM escrows WHERE status = $1`,
+    [status]
+  );
+  return parseInt(result.rows[0].count, 10);
+};
+
+/**
+ * Get total transaction volume of escrows with a specific status
+ */
+export const getTotalVolumeByStatus = async (status: EscrowStatus): Promise<number> => {
+  const result = await query(
+    `SELECT SUM(amount::numeric) as total_volume 
+     FROM escrows 
+     WHERE status = $1`,
+    [status]
+  );
+  
+  if (!result.rows[0].total_volume) {
+    return 0;
+  }
+  
+  return parseFloat(result.rows[0].total_volume);
+};
+
+/**
+ * Get recent completed transactions (released escrows)
+ */
+export const getRecentCompletedTransactions = async (limit: number = 10, offset: number = 0): Promise<Escrow[]> => {
+  const result = await query(
+    `SELECT e.* 
+     FROM escrows e
+     WHERE e.status = $1
+     ORDER BY e.updated_at DESC
+     LIMIT $2 OFFSET $3`,
+    [EscrowStatus.RELEASED, limit, offset]
+  );
+  
+  return result.rows.map(mapDbEscrowToEscrow);
+};
+
+/**
+ * Get count of failed transactions (canceled or expired escrows)
+ */
+export const getFailedTransactionsCount = async (): Promise<number> => {
+  const result = await query(
+    `SELECT COUNT(*) 
+     FROM escrows 
+     WHERE status IN ($1, $2)`,
+    [EscrowStatus.CANCELED, EscrowStatus.EXPIRED]
+  );
+  
+  return parseInt(result.rows[0].count, 10);
+};
+
 // Helper function to map database row to Escrow type
 const mapDbEscrowToEscrow = (escrow: any): Escrow => {
   return {

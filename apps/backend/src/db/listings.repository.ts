@@ -154,6 +154,63 @@ export const deleteById = async (id: string): Promise<boolean> => {
   return result.rows.length > 0;
 };
 
+/**
+ * Get total count of all listings
+ */
+export const getTotalCount = async (): Promise<number> => {
+  const result = await query(`SELECT COUNT(*) FROM listings`);
+  return parseInt(result.rows[0].count, 10);
+};
+
+/**
+ * Get count of listings with a specific status
+ */
+export const getCountByStatus = async (status: ListingStatus): Promise<number> => {
+  const result = await query(
+    `SELECT COUNT(*) FROM listings WHERE status = $1`,
+    [status]
+  );
+  return parseInt(result.rows[0].count, 10);
+};
+
+/**
+ * Get listings that have been flagged or reported by users
+ */
+export const getFlaggedListings = async (limit: number = 10, offset: number = 0): Promise<Listing[]> => {
+  // In a real application, you would have a separate table for reports/flags
+  // For now, we'll simulate this by querying listings with specific criteria
+  const result = await query(
+    `SELECT l.* 
+     FROM listings l
+     LEFT JOIN reports r ON l.id = r.listing_id
+     GROUP BY l.id
+     ORDER BY COUNT(r.id) DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset]
+  );
+  
+  return result.rows.map(mapDbListingToListing);
+};
+
+/**
+ * Update a listing's status
+ */
+export const updateStatus = async (id: string, status: ListingStatus): Promise<Listing | null> => {
+  const result = await query(
+    `UPDATE listings 
+     SET status = $2, updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [id, status]
+  );
+  
+  if (result.rows.length === 0) {
+    return null;
+  }
+  
+  return mapDbListingToListing(result.rows[0]);
+};
+
 // Helper function to map database row to Listing type
 const mapDbListingToListing = (listing: any): Listing => {
   return {
