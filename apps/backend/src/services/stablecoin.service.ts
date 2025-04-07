@@ -125,12 +125,10 @@ class StablecoinService {
       
       const tokenAccount = await this.findAssociatedTokenAddress(walletPublicKey, mintPublicKey);
       
-      // Check if we can use Helius API (preferred for production)
       if (this.heliusApiKey) {
         return this.getTokenBalanceFromHelius(walletAddress, tokenSymbol);
       }
       
-      // Fallback to direct RPC call
       const tokenAccountInfo = await this.connection.getTokenAccountBalance(tokenAccount);
       
       if (!tokenAccountInfo?.value) {
@@ -142,62 +140,45 @@ class StablecoinService {
       return {
         tokenSymbol,
         amount,
-        usdValue: amount, // For stablecoins, amount equals USD value
+        usdValue: amount,
         mintAddress,
         decimals: tokenAccountInfo.value.decimals,
         associatedTokenAddress: tokenAccount.toBase58(),
         lastUpdated: new Date()
       };
     } catch (error) {
-      logger.error('Error fetching token balance:', error);
+      logger.error('Error getting token balance:', error);
       
-      // If token account doesn't exist, return zero balance
-      if (error instanceof Error && error.message.includes('could not find account')) {
-        return {
-          tokenSymbol,
-          amount: 0,
-          usdValue: 0,
-          mintAddress: this.getMintAddress(tokenSymbol),
-          decimals: TOKEN_DECIMALS[tokenSymbol],
-          associatedTokenAddress: '',
-          lastUpdated: new Date()
-        };
+      if (error instanceof Error && !(error instanceof BlockchainError)) {
+        throw new BlockchainError(`Failed to get token balance: ${error.message}`);
       }
       
-      if (error instanceof Error) {
-        throw new BlockchainError(`Error fetching ${tokenSymbol} balance: ${error.message}`);
-      }
-      
-      throw new BlockchainError(`Unknown error fetching ${tokenSymbol} balance`);
+      throw error;
     }
   }
   
   async getAllTokenBalances(walletAddress: string): Promise<TokenBalance[]> {
     try {
-      const balances: TokenBalance[] = [];
-      
-      // Check if we can use Helius API (preferred for production)
       if (this.heliusApiKey) {
         return this.getAllTokenBalancesFromHelius(walletAddress);
       }
       
-      // Fallback to fetching each stablecoin individually
-      const supportedTokens = Object.values(StablecoinType);
+      const balances: TokenBalance[] = [];
       
-      for (const token of supportedTokens) {
+      for (const tokenSymbol of Object.values(StablecoinType)) {
         try {
-          const balance = await this.getTokenBalance(walletAddress, token);
+          const balance = await this.getTokenBalance(walletAddress, tokenSymbol);
           balances.push(balance);
         } catch (error) {
-          logger.warn(`Error fetching ${token} balance for ${walletAddress}`, error);
+          logger.warn(`Failed to get balance for ${tokenSymbol}`, error);
           
-          // Add zero balance for this token
+          const mintAddress = this.getMintAddress(tokenSymbol);
           balances.push({
-            tokenSymbol: token,
+            tokenSymbol,
             amount: 0,
             usdValue: 0,
-            mintAddress: this.getMintAddress(token),
-            decimals: TOKEN_DECIMALS[token],
+            mintAddress,
+            decimals: TOKEN_DECIMALS[tokenSymbol],
             associatedTokenAddress: '',
             lastUpdated: new Date()
           });
@@ -206,107 +187,57 @@ class StablecoinService {
       
       return balances;
     } catch (error) {
-      logger.error('Error fetching all token balances:', error);
+      logger.error('Error getting all token balances:', error);
       
       if (error instanceof Error) {
-        throw new BlockchainError(`Error fetching token balances: ${error.message}`);
+        throw new BlockchainError(`Failed to get all token balances: ${error.message}`);
       }
       
-      throw new BlockchainError('Unknown error fetching token balances');
+      throw new BlockchainError('Failed to get all token balances');
     }
   }
   
-  async getTransactionHistory(walletAddress: string, tokenSymbol?: StablecoinType, limit = 20): Promise<TokenTransaction[]> {
+  async getTransactionHistory(
+    walletAddress: string,
+    tokenSymbol?: StablecoinType,
+    limit = 20
+  ): Promise<TokenTransaction[]> {
     try {
-      // If Helius API is available, use it for better transaction history
       if (this.heliusApiKey) {
         return this.getTransactionHistoryFromHelius(walletAddress, tokenSymbol, limit);
       }
       
-      // Fallback to basic transaction history from RPC
-      const walletPublicKey = new PublicKey(walletAddress);
-      const signatures = await this.connection.getSignaturesForAddress(walletPublicKey, { limit });
-      
-      const transactions: TokenTransaction[] = [];
-      
-      for (const sig of signatures) {
-        try {
-          const tx = await this.connection.getTransaction(sig.signature, {
-            commitment: 'confirmed',
-            maxSupportedTransactionVersion: 0
-          });
-          
-          if (!tx || !tx.meta) continue;
-          
-          // Extract token transfers from transaction (simplified implementation)
-          // In a production environment, this would need more robust parsing logic
-          const isTokenTx = this.isTokenTransaction(tx);
-          
-          if (isTokenTx) {
-            const fromAddress = tx.transaction.signatures[0] ? 
-              (await this.connection.getSignatureStatus(tx.transaction.signatures[0])).value?.confirmationStatus ? 
-              walletAddress : walletAddress : walletAddress;
-            
-            let toAddress = 'unknown';
-            let amount = 0;
-            
-            // Try to extract token amount and destination (simplified)
-            if (tx.meta && tx.meta.postTokenBalances && tx.meta.postTokenBalances.length > 0) {
-              const tokenBalance = tx.meta.postTokenBalances[0];
-              amount = Number(tokenBalance.uiTokenAmount?.amount || 0) / Math.pow(10, tokenBalance.uiTokenAmount?.decimals || 9);
-              
-              if (tokenBalance.owner && tokenBalance.owner !== walletAddress) {
-                toAddress = tokenBalance.owner;
-              }
-            }
-            
-            transactions.push({
-              signature: sig.signature,
-              from: fromAddress,
-              to: toAddress,
-              amount,
-              tokenSymbol: tokenSymbol || StablecoinType.USDC, // Default token type
-              timestamp: new Date(tx.blockTime ? tx.blockTime * 1000 : Date.now()),
-              status: sig.err ? 'failed' : 'confirmed',
-              blockHeight: tx.slot,
-              fee: tx.meta.fee / 1e9 // Convert from lamports to SOL
-            });
-          }
-        } catch (error) {
-          logger.warn(`Error parsing transaction ${sig.signature}:`, error);
-        }
-      }
-      
-      return transactions;
+      throw new BlockchainError('Transaction history without Helius API is not implemented');
     } catch (error) {
-      logger.error('Error fetching transaction history:', error);
+      logger.error('Error getting transaction history:', error);
       
-      if (error instanceof Error) {
-        throw new BlockchainError(`Error fetching transaction history: ${error.message}`);
+      if (error instanceof Error && !(error instanceof BlockchainError)) {
+        throw new BlockchainError(`Failed to get transaction history: ${error.message}`);
       }
       
-      throw new BlockchainError('Unknown error fetching transaction history');
+      throw error;
     }
   }
   
-  // Helper method to check if a transaction is a token transaction
-  private isTokenTransaction(tx: any): boolean {
-    if (!tx || !tx.meta) return false;
-    
-    const programIds = tx.transaction.message.programIds?.map((id: any) => id.toString());
-    if (programIds && programIds.includes(TOKEN_PROGRAM_ID.toString())) {
-      return true;
+  isTokenTransaction(tx: any): boolean {
+    try {
+      if (!tx || !tx.transaction || !tx.transaction.message || !tx.transaction.message.accountKeys) {
+        return false;
+      }
+      
+      const accountKeys = tx.transaction.message.accountKeys;
+      
+      for (const key of accountKeys) {
+        if (key.pubkey.toBase58() === TOKEN_PROGRAM_ID.toBase58()) {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      logger.error('Error checking if transaction is token transaction:', error);
+      return false;
     }
-    
-    if (tx.meta.preTokenBalances && tx.meta.preTokenBalances.length > 0) {
-      return true;
-    }
-    
-    if (tx.meta.postTokenBalances && tx.meta.postTokenBalances.length > 0) {
-      return true;
-    }
-    
-    return false;
   }
   
   async verifyTransaction(signature: string): Promise<{
@@ -323,118 +254,114 @@ class StablecoinService {
         return { isValid: false };
       }
       
-      // Check if it's a token transaction
-      const isTokenTx = this.isTokenTransaction(tx);
-      
-      if (!isTokenTx) {
+      if (!this.isTokenTransaction(tx)) {
         return { isValid: false };
       }
       
-      // Extract basic transaction details
-      let fromAddress = 'unknown';
-      let toAddress = 'unknown';
-      let amount = 0;
-      let tokenSymbol = StablecoinType.USDC; // Default
-      
-      // Try to extract sender (from first signature)
-      if (tx.transaction.signatures && tx.transaction.signatures.length > 0) {
-        fromAddress = await this.getAddressFromSignature(tx.transaction.signatures[0]);
+      if (tx.meta?.err) {
+        return { isValid: false };
       }
       
-      // Try to extract token details
-      if (tx.meta && tx.meta.postTokenBalances && tx.meta.postTokenBalances.length > 0) {
-        const tokenBalance = tx.meta.postTokenBalances[0];
-        
-        // Extract amount
-        amount = Number(tokenBalance.uiTokenAmount?.amount || 0) / 
-                 Math.pow(10, tokenBalance.uiTokenAmount?.decimals || 9);
-        
-        // Extract recipient
-        if (tokenBalance.owner && tokenBalance.owner !== fromAddress) {
-          toAddress = tokenBalance.owner;
-        }
-        
-        // Try to determine token type from mint address
-        if (tokenBalance.mint) {
-          tokenSymbol = this.getTokenSymbolFromMint(tokenBalance.mint) || StablecoinType.USDC;
-        }
+      const tokenTransfers = tx.meta?.postTokenBalances?.filter(post => {
+        const pre = tx.meta?.preTokenBalances?.find(
+          pre => pre.accountIndex === post.accountIndex
+        );
+        return pre && pre.uiTokenAmount.uiAmount !== post.uiTokenAmount.uiAmount;
+      });
+      
+      if (!tokenTransfers || tokenTransfers.length === 0) {
+        return { isValid: false };
       }
       
-      const transaction: TokenTransaction = {
-        signature,
-        from: fromAddress,
-        to: toAddress,
-        amount,
-        tokenSymbol,
-        timestamp: new Date(tx.blockTime ? tx.blockTime * 1000 : Date.now()),
-        status: tx.meta?.err ? 'failed' : 'confirmed',
-        blockHeight: tx.slot,
-        fee: tx.meta?.fee ? tx.meta.fee / 1e9 : 0 // Convert from lamports to SOL
-      };
+      const transfer = tokenTransfers[0];
+      const mintAddress = transfer.mint;
+      const tokenSymbol = this.getTokenSymbolFromMint(mintAddress);
+      
+      if (!tokenSymbol) {
+        return { isValid: false };
+      }
+      
+      const pre = tx.meta?.preTokenBalances?.find(
+        pre => pre.accountIndex === transfer.accountIndex
+      );
+      
+      const post = tx.meta?.postTokenBalances?.find(
+        post => post.accountIndex === transfer.accountIndex
+      );
+      
+      if (!pre || !post) {
+        return { isValid: false };
+      }
+      
+      const fromAddress = await this.getAddressFromSignature(signature);
       
       return {
-        isValid: !tx.meta?.err,
-        transaction
+        isValid: true,
+        transaction: {
+          signature,
+          from: fromAddress || 'unknown',
+          to: 'unknown',
+          amount: Math.abs(
+            (post.uiTokenAmount.uiAmount || 0) - (pre.uiTokenAmount.uiAmount || 0)
+          ),
+          tokenSymbol,
+          timestamp: new Date(tx.blockTime ? tx.blockTime * 1000 : Date.now()),
+          status: 'confirmed',
+          blockHeight: tx.slot,
+          fee: tx.meta?.fee ? tx.meta.fee / 1e9 : undefined
+        }
       };
     } catch (error) {
       logger.error('Error verifying transaction:', error);
-      
-      if (error instanceof Error) {
-        throw new BlockchainError(`Error verifying transaction: ${error.message}`);
-      }
-      
-      throw new BlockchainError('Unknown error verifying transaction');
+      return { isValid: false };
     }
   }
   
-  // Helper method to get address from signature
-  private async getAddressFromSignature(signature: string): Promise<string> {
+  async getAddressFromSignature(signature: string): Promise<string> {
     try {
-      const status = await this.connection.getSignatureStatus(signature);
-      return status.value?.confirmationStatus ? signature.substring(0, 44) : 'unknown';
-    } catch {
-      return 'unknown';
+      const tx = await this.connection.getTransaction(signature);
+      if (!tx || !tx.transaction || !tx.transaction.signatures || tx.transaction.signatures.length === 0) {
+        return '';
+      }
+      return tx.transaction.message.accountKeys[0].toString();
+    } catch (error) {
+      logger.error('Error getting address from signature:', error);
+      return '';
     }
   }
   
-  // Helper method to get token symbol from mint address
-  private getTokenSymbolFromMint(mintAddress: string): StablecoinType | undefined {
+  getTokenSymbolFromMint(mintAddress: string): StablecoinType | undefined {
     for (const [symbol, addresses] of Object.entries(STABLECOIN_MINTS)) {
-      if (Object.values(addresses).includes(mintAddress)) {
+      if (addresses[this.network] === mintAddress) {
         return symbol as StablecoinType;
       }
     }
     return undefined;
   }
   
-  async circleTokenTransfer(fromPrivateKey: string, toAddress: string, amount: number, tokenSymbol: StablecoinType): Promise<string> {
-    if (!this.circleApiKey) {
-      throw new BadRequestError('Circle API key not configured');
-    }
-    
+  async circleTokenTransfer(
+    fromPrivateKey: string,
+    toAddress: string,
+    amount: number,
+    tokenSymbol: StablecoinType
+  ): Promise<string> {
     try {
-      logger.info(`Creating Circle token transfer: ${amount} ${tokenSymbol} to ${toAddress}`);
+      if (!this.circleApiKey) {
+        throw new BlockchainError('Circle API key not configured');
+      }
       
-      const mockTransactionId = `circle_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
-      
-      return mockTransactionId;
+      throw new BlockchainError('Circle API integration not implemented');
     } catch (error) {
       logger.error('Error in Circle token transfer:', error);
       
-      if (typeof error === 'object' && error !== null && 'response' in error) {
-        const axiosError = error as { response?: { data?: { message?: string } } };
-        throw new BlockchainError(`Circle API error: ${axiosError.response?.data?.message || 'Unknown API error'}`);
+      if (error instanceof Error && !(error instanceof BlockchainError)) {
+        throw new BlockchainError(`Failed to complete Circle token transfer: ${error.message}`);
       }
       
-      if (error instanceof Error) {
-        throw new BlockchainError(`Error in Circle token transfer: ${error.message}`);
-      }
-      
-      throw new BlockchainError('Unknown error in Circle token transfer');
+      throw error;
     }
   }
   
-  // Helper methods for Helius API integration
   private async getTokenBalanceFromHelius(walletAddress: string, tokenSymbol: StablecoinType): Promise<TokenBalance> {
     try {
       if (!this.heliusApiKey) {
@@ -442,12 +369,28 @@ class StablecoinService {
       }
       
       const mintAddress = this.getMintAddress(tokenSymbol);
-      const url = `https://api.helius.xyz/v0/addresses/${walletAddress}/balances?api-key=${this.heliusApiKey}`;
+      const walletPublicKey = new PublicKey(walletAddress);
+      const mintPublicKey = new PublicKey(mintAddress);
+      const associatedTokenAddress = (await this.findAssociatedTokenAddress(walletPublicKey, mintPublicKey)).toBase58();
+      
+      const url = `https://api.helius.xyz/v0/addresses/${associatedTokenAddress}/balances?api-key=${this.heliusApiKey}`;
       
       const response = await axios.get<{ tokens: TokenInfo[] }>(url);
-      const tokens = response.data.tokens || [];
+      const data = response.data;
       
-      const token = tokens.find((t: TokenInfo) => t.mint === mintAddress);
+      if (!data.tokens || data.tokens.length === 0) {
+        return {
+          tokenSymbol,
+          amount: 0,
+          usdValue: 0,
+          mintAddress,
+          decimals: TOKEN_DECIMALS[tokenSymbol],
+          associatedTokenAddress,
+          lastUpdated: new Date()
+        };
+      }
+      
+      const token = data.tokens.find((t: TokenInfo) => t.mint === mintAddress);
       
       if (!token) {
         return {
@@ -456,20 +399,18 @@ class StablecoinService {
           usdValue: 0,
           mintAddress,
           decimals: TOKEN_DECIMALS[tokenSymbol],
-          associatedTokenAddress: '',
+          associatedTokenAddress,
           lastUpdated: new Date()
         };
       }
       
-      const amount = parseFloat(token.amount) / Math.pow(10, token.decimals);
-      
       return {
         tokenSymbol,
-        amount,
-        usdValue: amount,
+        amount: token.uiAmount,
+        usdValue: token.uiAmount,
         mintAddress,
         decimals: token.decimals,
-        associatedTokenAddress: token.address || '',
+        associatedTokenAddress,
         lastUpdated: new Date()
       };
     } catch (error) {
@@ -489,31 +430,16 @@ class StablecoinService {
         throw new BlockchainError('Helius API key not configured');
       }
       
-      const url = `https://api.helius.xyz/v0/addresses/${walletAddress}/balances?api-key=${this.heliusApiKey}`;
-      
-      const response = await axios.get<{ tokens: TokenInfo[] }>(url);
-      const tokens = response.data.tokens || [];
-      
-      const supportedTokens = Object.values(StablecoinType);
       const balances: TokenBalance[] = [];
       
-      for (const tokenSymbol of supportedTokens) {
-        const mintAddress = this.getMintAddress(tokenSymbol);
-        const token = tokens.find((t: TokenInfo) => t.mint === mintAddress);
-        
-        if (token) {
-          const amount = parseFloat(token.amount) / Math.pow(10, token.decimals);
+      for (const tokenSymbol of Object.values(StablecoinType)) {
+        try {
+          const balance = await this.getTokenBalanceFromHelius(walletAddress, tokenSymbol);
+          balances.push(balance);
+        } catch (error) {
+          logger.warn(`Failed to get Helius balance for ${tokenSymbol}`, error);
           
-          balances.push({
-            tokenSymbol,
-            amount,
-            usdValue: amount,
-            mintAddress,
-            decimals: token.decimals,
-            associatedTokenAddress: token.address || '',
-            lastUpdated: new Date()
-          });
-        } else {
+          const mintAddress = this.getMintAddress(tokenSymbol);
           balances.push({
             tokenSymbol,
             amount: 0,
@@ -567,11 +493,9 @@ class StablecoinService {
         let destinationAddress = 'unknown';
         let actualTokenSymbol = tokenSymbol || StablecoinType.USDC;
         
-        // Process token transfers
         if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
           const tokenTransfer = tx.tokenTransfers[0];
           
-          // Determine the token symbol from the mint if not provided
           if (!tokenSymbol) {
             actualTokenSymbol = this.getTokenSymbolFromMint(tokenTransfer.mint) || StablecoinType.USDC;
           }
@@ -591,10 +515,10 @@ class StablecoinService {
           to: destinationAddress,
           amount,
           tokenSymbol: actualTokenSymbol,
-          timestamp: new Date(tx.timestamp * 1000), // Convert to Date
+          timestamp: new Date(tx.timestamp * 1000),
           status: tx.type === 'TOKEN_TRANSFER' ? 'confirmed' : 'failed',
           blockHeight: tx.slot,
-          fee: tx.fee / 1e9 // Convert from lamports to SOL
+          fee: tx.fee / 1e9
         };
       });
     } catch (error) {
