@@ -172,7 +172,7 @@ export const getRecentCompletedTransactions = async (limit: number = 10, offset:
      WHERE e.status = $1
      ORDER BY e.updated_at DESC
      LIMIT $2 OFFSET $3`,
-    [EscrowStatus.RELEASED, limit, offset]
+    ['released', limit, offset]
   );
   
   return result.rows.map(mapDbEscrowToEscrow);
@@ -186,11 +186,73 @@ export const getFailedTransactionsCount = async (): Promise<number> => {
     `SELECT COUNT(*) 
      FROM escrows 
      WHERE status IN ($1, $2)`,
-    [EscrowStatus.CANCELED, EscrowStatus.EXPIRED]
+    ['canceled', 'expired']
   );
   
   return parseInt(result.rows[0].count, 10);
 };
+
+export async function findExpiredEscrows(): Promise<Escrow[]> {
+  const now = new Date();
+  
+  const result = await query(
+    `SELECT * FROM escrows
+     WHERE status = $1
+     AND release_time IS NOT NULL
+     AND release_time < $2`,
+    ['created', now]
+  );
+  
+  return result.rows.map(mapDbEscrowToEscrow);
+}
+
+export async function expireEscrow(id: string): Promise<Escrow> {
+  const now = new Date();
+  
+  const result = await query(
+    `UPDATE escrows
+     SET status = $1, updated_at = $2
+     WHERE id = $3
+     RETURNING *`,
+    ['expired', now, id]
+  );
+  
+  if (result.rows.length === 0) {
+    throw new Error(`Escrow with id ${id} not found`);
+  }
+  
+  return mapDbEscrowToEscrow(result.rows[0]);
+}
+
+export async function cancelEscrow(id: string): Promise<Escrow> {
+  const now = new Date();
+  
+  const result = await query(
+    `UPDATE escrows
+     SET status = $1, updated_at = $2
+     WHERE id = $3
+     RETURNING *`,
+    ['canceled', now, id]
+  );
+  
+  if (result.rows.length === 0) {
+    throw new Error(`Escrow with id ${id} not found`);
+  }
+  
+  return mapDbEscrowToEscrow(result.rows[0]);
+}
+
+export async function getInactiveEscrows(userId: string): Promise<Escrow[]> {
+  const result = await query(
+    `SELECT * FROM escrows
+     WHERE (buyer_id = $1 OR seller_id = $1)
+     AND status IN ($2, $3)
+     ORDER BY updated_at DESC`,
+    [userId, 'canceled', 'expired']
+  );
+  
+  return result.rows.map(mapDbEscrowToEscrow);
+}
 
 // Helper function to map database row to Escrow type
 const mapDbEscrowToEscrow = (escrow: any): Escrow => {

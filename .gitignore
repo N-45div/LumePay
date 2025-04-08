@@ -60,6 +60,11 @@ tmp/
 
 # Project specific
 Progress&details.txt
+project-doc
+project-doc-general
+.windsurfrules
+project-structure
+DEVPROGRESS.md - temporarily accessible for edits
 
 # Security - SSH Keys
 *ssh-agent*

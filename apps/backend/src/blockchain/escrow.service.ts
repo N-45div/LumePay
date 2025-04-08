@@ -5,13 +5,18 @@ import {
   SystemProgram, 
   Transaction,
   TransactionInstruction,
-  sendAndConfirmTransaction
+  sendAndConfirmTransaction,
+  clusterApiUrl,
+  LAMPORTS_PER_SOL
 } from '@solana/web3.js';
 import { 
   TOKEN_PROGRAM_ID, 
-  createTransferInstruction, 
-  getAssociatedTokenAddress 
+  getAssociatedTokenAddress,
+  getAccount,
+  createAssociatedTokenAccountInstruction,
+  createTransferInstruction
 } from '@solana/spl-token';
+import * as borsh from 'borsh';
 import tweetnacl from 'tweetnacl';
 import bs58 from 'bs58';
 import stablecoinService, { StablecoinType } from '../services/stablecoin.service';
@@ -21,24 +26,148 @@ import transactionMonitorService from '../services/transaction-monitor.service';
 
 const PLATFORM_FEE_PERCENTAGE = Number(process.env.PLATFORM_FEE_PERCENTAGE || '2.5');
 const PLATFORM_WALLET_ADDRESS = process.env.PLATFORM_WALLET_ADDRESS;
-const ESCROW_PROGRAM_ID = new PublicKey(process.env.ESCROW_PROGRAM_ID || 'ESCRoWproGramidXXXXXXXXXXXXXXXXXX111111');
+const ESCROW_PROGRAM_ID = new PublicKey('EscDoNyGa2G2JbCt525KJSsBi6phRUMqtJWWYwfriKTT'); 
 const NETWORK = process.env.SOLANA_NETWORK || 'devnet';
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ESCROW_DURATION_DAYS = 7;
+const DISPUTE_WINDOW_DAYS = 3;
+const ESCROW_SEED_PREFIX = 'escrow';
 
-const TOKEN_MINT_ADDRESSES = {
+const TOKEN_MINT_ADDRESSES: {[network: string]: {[currency: string]: string}} = {
   mainnet: {
-    [StablecoinType.USDC]: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-    [StablecoinType.USDT]: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-    [StablecoinType.PAX]: 'BbBCH5yTRd2jcZEr2PAYYb7BoNFTYenNkFEeJoaJRvAn'
+    'USDC': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    'USDT': 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    'PAX': 'BbBCH5yTRd2jcZEr2PAYYb7BoNFTYenNkFEeJoaJRvAn'
   },
   devnet: {
-    [StablecoinType.USDC]: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
-    [StablecoinType.USDT]: 'BQcdHdAQW1hczDbBi9hiegXAR7A98Q9jx3X3sXJHgS7b',
-    [StablecoinType.PAX]: 'DJafV9qemGp7mLMEn5wrfqaFwxsbLgUsGVA16K9PmCnj'
+    'USDC': '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+    'USDT': 'BQcdHdAQW1hczDbBi9hiegXAR7A98Q9jx3X3sXJHgS7b',
+    'PAX': 'DJafV9qemGp7mLMEn5wrfqaFwxsbLgUsGVA16K9PmCnj'
   }
 };
+
+enum EscrowState {
+  Uninitialized,
+  Created,
+  Funded,
+  Released,
+  Refunded,
+  Disputed,
+  Closed
+}
+enum EscrowInstructionType {
+  Initialize,
+  Fund,
+  Release,
+  Refund,
+  Dispute
+}
+
+class InitializeInstruction {
+  instructionType = EscrowInstructionType.Initialize;
+  amount: bigint;
+  releaseTimestamp: bigint;
+  disputeTimeWindow: bigint;
+  listingId: Uint8Array;
+  
+  constructor(props: { 
+    amount: number, 
+    releaseTimestamp: number, 
+    disputeTimeWindow: number, 
+    listingId: string 
+  }) {
+    this.amount = BigInt(props.amount);
+    this.releaseTimestamp = BigInt(props.releaseTimestamp);
+    this.disputeTimeWindow = BigInt(props.disputeTimeWindow);
+    this.listingId = new Uint8Array(32);
+    const idBytes = Buffer.from(props.listingId);
+    this.listingId.set(idBytes.slice(0, 32));
+  }
+}
+
+class FundInstruction {
+  instructionType = EscrowInstructionType.Fund;
+  transactionSignature: Uint8Array;
+  
+  constructor(props: { transactionSignature: string }) {
+    this.transactionSignature = new Uint8Array(64);
+    const sigBytes = Buffer.from(props.transactionSignature);
+    this.transactionSignature.set(sigBytes.slice(0, 64));
+  }
+}
+
+class ReleaseInstruction {
+  instructionType = EscrowInstructionType.Release;
+  transactionSignature: Uint8Array;
+  
+  constructor(props: { transactionSignature: string }) {
+    this.transactionSignature = new Uint8Array(64);
+    const sigBytes = Buffer.from(props.transactionSignature);
+    this.transactionSignature.set(sigBytes.slice(0, 64));
+  }
+}
+
+class RefundInstruction {
+  instructionType = EscrowInstructionType.Refund;
+  transactionSignature: Uint8Array;
+  
+  constructor(props: { transactionSignature: string }) {
+    this.transactionSignature = new Uint8Array(64);
+    const sigBytes = Buffer.from(props.transactionSignature);
+    this.transactionSignature.set(sigBytes.slice(0, 64));
+  }
+}
+
+class DisputeInstruction {
+  instructionType = EscrowInstructionType.Dispute;
+  reason: string;
+  
+  constructor(props: { reason: string }) {
+    this.reason = props.reason;
+  }
+}
+
+const escrowInstructionSchema = new Map<any, any>([
+  [InitializeInstruction, { 
+    kind: 'struct', 
+    fields: [
+      ['instructionType', 'u8'],
+      ['amount', 'u64'],
+      ['releaseTimestamp', 'i64'],
+      ['disputeTimeWindow', 'i64'],
+      ['listingId', [32]]
+    ] 
+  }],
+  [FundInstruction, { 
+    kind: 'struct', 
+    fields: [
+      ['instructionType', 'u8'], 
+      ['transactionSignature', [64]]
+    ] 
+  }],
+  [ReleaseInstruction, { 
+    kind: 'struct', 
+    fields: [
+      ['instructionType', 'u8'], 
+      ['transactionSignature', [64]]
+    ] 
+  }],
+  [RefundInstruction, { 
+    kind: 'struct', 
+    fields: [
+      ['instructionType', 'u8'], 
+      ['transactionSignature', [64]]
+    ] 
+  }],
+  [DisputeInstruction, { 
+    kind: 'struct', 
+    fields: [
+      ['instructionType', 'u8'], 
+      ['reason', 'string']
+    ] 
+  }]
+]);
 
 interface EscrowResult {
   escrowAddress: string;
@@ -47,274 +176,150 @@ interface EscrowResult {
 }
 
 interface TransactionResult {
-  transactionSignature: string;
-  blockTime?: number;
+  transactionId: string;
+  status: string;
 }
 
 export class EscrowService {
   private connection: Connection;
-  private escrowProgramId: PublicKey;
-  private platformWalletAddress?: PublicKey;
-  private network: 'mainnet' | 'devnet';
-  
+  private programId: PublicKey;
+
   constructor() {
-    this.connection = new Connection(process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com');
-    this.escrowProgramId = ESCROW_PROGRAM_ID;
-    this.network = (NETWORK === 'mainnet') ? 'mainnet' : 'devnet';
-    
-    if (PLATFORM_WALLET_ADDRESS) {
-      try {
-        this.platformWalletAddress = new PublicKey(PLATFORM_WALLET_ADDRESS);
-        logger.info(`Platform fee configuration: ${PLATFORM_FEE_PERCENTAGE}% fee to ${PLATFORM_WALLET_ADDRESS}`);
-      } catch (error) {
-        logger.warn('Invalid platform wallet address:', error);
-        logger.warn('Platform fees will not be collected due to invalid wallet address');
-      }
-    } else {
-      logger.info('No platform wallet address configured. Platform fees will not be collected.');
-    }
+    // Connect to the desired network (devnet/mainnet)
+    this.connection = new Connection(
+      process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+      'confirmed'
+    );
+    this.programId = ESCROW_PROGRAM_ID;
   }
-  
-  private getTokenMintAddress(currency: StablecoinType): string {
-    return TOKEN_MINT_ADDRESSES[this.network][currency];
+
+  // Find the Escrow PDA (Program Derived Address)
+  async findEscrowPDA(seller: PublicKey, buyer: PublicKey, listingId: string): Promise<[PublicKey, number]> {
+    return PublicKey.findProgramAddress(
+      [
+        Buffer.from(ESCROW_SEED_PREFIX),
+        seller.toBuffer(),
+        buyer.toBuffer(),
+        Buffer.from(listingId)
+      ],
+      this.programId
+    );
   }
-  
+
+  // Creates an escrow account on-chain
   async createEscrow(
-    buyerWalletAddress: string,
     sellerWalletAddress: string,
+    buyerWalletAddress: string,
     amount: number,
-    currency: StablecoinType = StablecoinType.USDC,
-    durationDays: number = DEFAULT_ESCROW_DURATION_DAYS
-  ): Promise<EscrowResult> {
+    currency = 'USDC',
+    durationDays = DEFAULT_ESCROW_DURATION_DAYS
+  ): Promise<{ escrowAddress: string; releaseTime: Date }> {
     try {
-      const buyerPubkey = new PublicKey(buyerWalletAddress);
-      const sellerPubkey = new PublicKey(sellerWalletAddress);
-      
-      const escrowKeypair = Keypair.generate();
-      const escrowPubkey = escrowKeypair.publicKey;
-      
-      const releaseTime = new Date(Date.now() + durationDays * DAY_IN_MS);
-      
-      return {
-        escrowAddress: escrowPubkey.toString(),
-        escrowSecretKey: escrowKeypair.secretKey,
-        releaseTime
-      };
-    } catch (error) {
-      logger.error('Error creating escrow:', error);
-      if (error instanceof Error) {
-        throw new BlockchainError(`Error creating escrow: ${error.message}`);
-      }
-      throw new BlockchainError('Unknown error creating escrow');
-    }
-  }
-  
-  async fundEscrow(
-    escrowAddress: string,
-    amount: number,
-    buyerPrivateKey: string,
-    buyerId?: string,
-    currency: StablecoinType = StablecoinType.USDC
-  ): Promise<TransactionResult> {
-    try {
-      logger.info(`Funding escrow: ${escrowAddress} with ${amount} ${currency}`);
-      
-      // Validate inputs
-      if (!escrowAddress) {
-        throw new Error('Escrow address is required');
+      logger.info(`Creating escrow: buyer=${buyerWalletAddress}, seller=${sellerWalletAddress}, amount=${amount}, currency=${currency}`);
+
+      if (!buyerWalletAddress || !sellerWalletAddress) {
+        throw new Error('Buyer and seller wallet addresses are required');
       }
       
-      if (!amount || amount <= 0) {
+      if (amount <= 0) {
         throw new Error('Amount must be greater than 0');
       }
-      
-      if (!buyerPrivateKey) {
-        throw new Error('Buyer private key is required');
-      }
-      
-      // Parse private key
-      let privateKeyBytes;
-      try {
-        privateKeyBytes = Buffer.from(JSON.parse(buyerPrivateKey));
-      } catch (e) {
-        try {
-          privateKeyBytes = bs58.decode(buyerPrivateKey);
-        } catch (e2) {
-          logger.error('Failed to decode private key', { error: e2 });
-          throw new Error('Invalid private key format');
-        }
-      }
-      
-      const buyerKeypair = Keypair.fromSecretKey(privateKeyBytes);
-      const escrowPublicKey = new PublicKey(escrowAddress);
-      
-      // Get token information
-      const mintAddress = this.getTokenMintAddress(currency);
-      logger.debug(`Using mint address for ${currency}: ${mintAddress}`);
-      const mintPublicKey = new PublicKey(mintAddress);
-      
-      // Get token accounts
-      try {
-        const buyerTokenAccount = await getAssociatedTokenAddress(
-          mintPublicKey,
-          buyerKeypair.publicKey
-        );
-        
-        const escrowTokenAccount = await getAssociatedTokenAddress(
-          mintPublicKey,
-          escrowPublicKey,
-          true
-        );
-        
-        // Calculate fees
-        const platformFee = amount * (PLATFORM_FEE_PERCENTAGE / 100);
-        const amountAfterFee = amount - platformFee;
-        
-        const decimals = 6;
-        const amountInSmallestUnits = Math.floor(amountAfterFee * Math.pow(10, decimals));
-        const feeInSmallestUnits = Math.floor(platformFee * Math.pow(10, decimals));
-        
-        logger.info(`Transfer details: ${amount} total, ${platformFee} fee (${PLATFORM_FEE_PERCENTAGE}%), ${amountAfterFee} after fee`);
-        
-        // Build transaction
-        const transaction = new Transaction();
-        
-        // Add main transfer instruction
-        transaction.add(
-          createTransferInstruction(
-            buyerTokenAccount,
-            escrowTokenAccount,
-            buyerKeypair.publicKey,
-            amountInSmallestUnits
-          )
-        );
-        
-        // Add platform fee transfer instruction if configured
-        if (this.platformWalletAddress && platformFee > 0) {
-          logger.info(`Adding platform fee transfer: ${platformFee} to ${this.platformWalletAddress.toString()}`);
-          
-          const platformTokenAccount = await getAssociatedTokenAddress(
-            mintPublicKey,
-            this.platformWalletAddress
-          );
-          
-          transaction.add(
-            createTransferInstruction(
-              buyerTokenAccount,
-              platformTokenAccount,
-              buyerKeypair.publicKey,
-              feeInSmallestUnits
-            )
-          );
-        } else if (platformFee > 0) {
-          logger.warn(`Platform fee of ${platformFee} was calculated but no valid platform wallet is configured. Fee will not be collected.`);
-        }
-        
-        // Finalize and send transaction
-        const blockhash = await this.connection.getRecentBlockhash();
-        transaction.recentBlockhash = blockhash.blockhash;
-        transaction.feePayer = buyerKeypair.publicKey;
-        
-        logger.info('Sending transaction to fund escrow...');
-        const signature = await sendAndConfirmTransaction(
-          this.connection,
-          transaction,
-          [buyerKeypair]
-        );
-        
-        logger.info(`Escrow successfully funded. Transaction signature: ${signature}`);
-        
-        // Monitor transaction if buyer ID is provided
-        if (buyerId) {
-          transactionMonitorService.addTransactionToMonitor(
-            signature,
-            escrowAddress,
-            buyerId,
-            'fund'
-          );
-        }
-        
-        return {
-          transactionSignature: signature,
-          blockTime: Date.now() / 1000
-        };
-      } catch (error) {
-        if (error instanceof Error) {
-          logger.error(`Error in token transfer operation: ${error.message}`, { error });
-          throw new Error(`Token transfer failed: ${error.message}`);
-        }
-        throw error;
-      }
-    } catch (error) {
-      logger.error('Error funding escrow:', error);
-      if (error instanceof Error) {
-        throw new BlockchainError(`Error funding escrow: ${error.message}`);
-      }
-      throw new BlockchainError('Unknown error funding escrow');
-    }
-  }
-  
-  async releaseEscrow(
-    escrowAddress: string,
-    sellerWalletAddress: string,
-    sellerId?: string,
-    currency: StablecoinType = StablecoinType.USDC
-  ): Promise<TransactionResult> {
-    try {
-      logger.info(`Releasing escrow: ${escrowAddress} to seller: ${sellerWalletAddress}, currency: ${currency}`);
-      
-      // Validate inputs
-      if (!escrowAddress) {
-        throw new Error('Escrow address is required');
-      }
-      
-      if (!sellerWalletAddress) {
-        throw new Error('Seller wallet address is required');
-      }
-      
-      // Validate wallet addresses
-      const escrowPublicKey = new PublicKey(escrowAddress);
-      const sellerPublicKey = new PublicKey(sellerWalletAddress);
-      
-      // In a full implementation, this would perform the on-chain transaction
-      // For the current implementation, we use a simulated transaction
-      const transactionSignature = `sim_release_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
-      
-      logger.info(`Escrow ${escrowAddress} released with transaction: ${transactionSignature}`);
-      
-      // Add transaction signature to monitoring service if seller ID is provided
-      if (sellerId) {
-        transactionMonitorService.addTransactionToMonitor(
-          transactionSignature,
-          escrowAddress,
-          sellerId,
-          'release'
-        );
-      }
+
+      const buyerPubkey = new PublicKey(buyerWalletAddress);
+      const sellerPubkey = new PublicKey(sellerWalletAddress);
+
+      const listingId = Date.now().toString() + Math.random().toString().substring(2, 10);
+
+      const releaseTime = new Date(Date.now() + durationDays * DAY_IN_MS);
+      const releaseTimestamp = Math.floor(releaseTime.getTime() / 1000);
+      const disputeTimeWindow = DISPUTE_WINDOW_DAYS * 24 * 60 * 60; // In seconds
+
+      const [escrowPDA, _] = await this.findEscrowPDA(sellerPubkey, buyerPubkey, listingId);
+
+      logger.info(`Escrow created with address: ${escrowPDA.toString()}, release time: ${releaseTime.toISOString()}`);
       
       return {
-        transactionSignature,
-        blockTime: Math.floor(Date.now() / 1000)
+        escrowAddress: escrowPDA.toString(),
+        releaseTime
       };
-    } catch (error) {
-      logger.error('Error releasing escrow:', error);
-      if (error instanceof Error) {
-        throw new BlockchainError(`Error releasing escrow: ${error.message}`);
-      }
-      throw new BlockchainError('Unknown error releasing escrow');
+    } catch (error: any) {
+      logger.error('Error creating escrow:', error);
+      throw new BlockchainError(`Failed to create escrow: ${error.message}`);
     }
   }
-  
-  async refundEscrow(
+
+  // Send a transaction to initialize an escrow account
+  async initializeEscrow(
+    escrowAddress: string,
+    sellerId: string,
+    buyerId: string,
+    privateKey: string,
+    amount: number,
+    listingId: string,
+    releaseTimestamp: number
+  ): Promise<{ transactionId: string }> {
+    try {
+      const escrowPubkey = new PublicKey(escrowAddress);
+      const signerKeypair = Keypair.fromSecretKey(
+        bs58.decode(privateKey)
+      );
+      
+      // Create initialize instruction
+      const initializeInstruction = new InitializeInstruction({
+        amount: amount,
+        releaseTimestamp: releaseTimestamp,
+        disputeTimeWindow: DISPUTE_WINDOW_DAYS * 24 * 60 * 60, // 3 days in seconds
+        listingId: listingId
+      });
+      
+      // Serialize the instruction data
+      const instructionData = borsh.serialize(
+        escrowInstructionSchema,
+        initializeInstruction
+      );
+      
+      // Create transaction instruction
+      const transaction = new Transaction().add(
+        new TransactionInstruction({
+          keys: [
+            { pubkey: signerKeypair.publicKey, isSigner: true, isWritable: true },
+            { pubkey: escrowPubkey, isSigner: false, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          programId: this.programId,
+          data: Buffer.from(instructionData)
+        })
+      );
+      
+      // Sign and send transaction
+      const signature = await this.connection.sendTransaction(
+        transaction,
+        [signerKeypair]
+      );
+      
+      await this.connection.confirmTransaction(signature, 'confirmed');
+      
+      return { 
+        transactionId: signature 
+      };
+    } catch (error: any) {
+      logger.error('Error initializing escrow on-chain:', error);
+      throw new BlockchainError(`Failed to initialize escrow on blockchain: ${error.message}`);
+    }
+  }
+
+  // Fund an escrow account
+  async fundEscrow(
     escrowAddress: string,
     buyerWalletAddress: string,
-    sellerId?: string,
-    currency: StablecoinType = StablecoinType.USDC
+    buyerId: string,
+    buyerPrivateKey: string,
+    amount: number,
+    currency = 'USDC'
   ): Promise<TransactionResult> {
     try {
-      logger.info(`Refunding escrow: ${escrowAddress} to buyer: ${buyerWalletAddress}, currency: ${currency}`);
-      
-      // Validate inputs
+      logger.info(`Funding escrow: ${escrowAddress}, amount: ${amount}, currency: ${currency}`);
+
       if (!escrowAddress) {
         throw new Error('Escrow address is required');
       }
@@ -323,72 +328,469 @@ export class EscrowService {
         throw new Error('Buyer wallet address is required');
       }
       
-      // Validate wallet addresses
-      const escrowPublicKey = new PublicKey(escrowAddress);
-      const buyerPublicKey = new PublicKey(buyerWalletAddress);
+      if (amount <= 0) {
+        throw new Error('Amount must be greater than 0');
+      }
+ 
+      const mintAddress = new PublicKey(this.getTokenMintAddress(currency));
+
+      const escrowPubkey = new PublicKey(escrowAddress);
+
+      const buyerKeypair = Keypair.fromSecretKey(
+        bs58.decode(buyerPrivateKey)
+      );
+ 
+      const buyerTokenAccount = await getAssociatedTokenAddress(
+        mintAddress,
+        buyerKeypair.publicKey
+      );
+      const escrowTokenAccount = await getAssociatedTokenAddress(
+        mintAddress,
+        escrowPubkey,
+        true
+      );
+
+      const tokenAmount = this.convertToTokenAmount(amount);
+
+      const txSignature = `tx_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+
+      const fundInstruction = new FundInstruction({
+        transactionSignature: txSignature
+      });
+
+      const instructionData = borsh.serialize(
+        escrowInstructionSchema,
+        fundInstruction
+      );
       
-      // In a full implementation, this would perform the on-chain transaction
-      // For the current implementation, we use a simulated transaction
-      const transactionSignature = `sim_refund_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+      // In a real implementation, we would create and send a transaction here
+      // For now, we'll simulate the blockchain transaction with a delay
+      const simulatedTxSignature = `sim_fund_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
       
-      logger.info(`Escrow ${escrowAddress} refunded with transaction: ${transactionSignature}`);
-      
-      // Add transaction signature to monitoring service if seller ID is provided
-      if (sellerId) {
+      logger.info(`Escrow ${escrowAddress} funded with transaction: ${simulatedTxSignature}`);
+      if (buyerId) {
         transactionMonitorService.addTransactionToMonitor(
-          transactionSignature,
+          simulatedTxSignature,
           escrowAddress,
-          sellerId,
-          'refund'
+          buyerId,
+          'fund'
         );
       }
       
       return {
-        transactionSignature,
-        blockTime: Math.floor(Date.now() / 1000)
+        transactionId: simulatedTxSignature,
+        status: 'pending'
       };
-    } catch (error) {
-      logger.error('Error refunding escrow:', error);
-      if (error instanceof Error) {
-        throw new BlockchainError(`Error refunding escrow: ${error.message}`);
-      }
-      throw new BlockchainError('Unknown error refunding escrow');
+    } catch (error: any) {
+      logger.error('Error funding escrow:', error);
+      throw new BlockchainError(`Failed to fund escrow: ${error.message}`);
     }
   }
-  
-  async verifyTransaction(signature: string): Promise<boolean> {
+
+  // Create and send a Solana transaction for funding an escrow
+  async sendFundEscrowTransaction(
+    escrowPubkey: PublicKey,
+    buyerKeypair: Keypair,
+    mintAddress: PublicKey,
+    buyerTokenAccount: PublicKey,
+    escrowTokenAccount: PublicKey,
+    amount: number,
+    txSignature: string
+  ): Promise<string> {
     try {
-      // For simulated transactions in test environments, always return success
-      if (signature.startsWith('sim_')) {
-        logger.info(`Verifying simulated transaction: ${signature}`);
-        return true;
+      // Check if escrow token account exists, if not create it
+      let transaction = new Transaction();
+      
+      try {
+        await getAccount(this.connection, escrowTokenAccount);
+      } catch (error) {
+        // Account doesn't exist, create it
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            buyerKeypair.publicKey,
+            escrowTokenAccount,
+            escrowPubkey,
+            mintAddress
+          )
+        );
       }
       
-      logger.info(`Verifying blockchain transaction: ${signature}`);
-      const transaction = await this.connection.getTransaction(signature);
+      // Create transfer instruction for SPL token
+      transaction.add(
+        createTransferInstruction(
+          buyerTokenAccount,
+          escrowTokenAccount,
+          buyerKeypair.publicKey,
+          BigInt(amount)
+        )
+      );
+      
+      // Create fund escrow instruction
+      const fundInstruction = new FundInstruction({
+        transactionSignature: txSignature
+      });
+      
+      const instructionData = borsh.serialize(
+        escrowInstructionSchema,
+        fundInstruction
+      );
+      
+      transaction.add(
+        new TransactionInstruction({
+          keys: [
+            { pubkey: buyerKeypair.publicKey, isSigner: true, isWritable: false },
+            { pubkey: escrowPubkey, isSigner: false, isWritable: true },
+            { pubkey: escrowTokenAccount, isSigner: false, isWritable: false },
+          ],
+          programId: this.programId,
+          data: Buffer.from(instructionData)
+        })
+      );
+      
+      // Sign and send the transaction
+      const signature = await this.connection.sendTransaction(
+        transaction,
+        [buyerKeypair]
+      );
+      
+      await this.connection.confirmTransaction(signature, 'confirmed');
+      
+      return signature;
+    } catch (error: any) {
+      logger.error('Error sending fund escrow transaction:', error);
+      throw new BlockchainError(`Failed to send fund escrow transaction: ${error.message}`);
+    }
+  }
+
+  // Release funds from escrow to seller
+  async releaseEscrow(
+    escrowAddress: string,
+    sellerWalletAddress: string,
+    adminPrivateKey: string,
+    amount: number,
+    currency = 'USDC'
+  ): Promise<TransactionResult> {
+    try {
+      logger.info(`Releasing escrow: ${escrowAddress} to seller: ${sellerWalletAddress}, currency: ${currency}`);
+
+      if (!escrowAddress) {
+        throw new Error('Escrow address is required');
+      }
+      
+      if (!sellerWalletAddress) {
+        throw new Error('Seller wallet address is required');
+      }
+
+      const escrowPubkey = new PublicKey(escrowAddress);
+      const sellerPubkey = new PublicKey(sellerWalletAddress);
+      const mintAddress = new PublicKey(this.getTokenMintAddress(currency));
+      
+      // Get seller token account
+      const sellerTokenAccount = await getAssociatedTokenAddress(
+        mintAddress,
+        sellerPubkey
+      );
+      
+      // Get escrow token account
+      const escrowTokenAccount = await getAssociatedTokenAddress(
+        mintAddress,
+        escrowPubkey,
+        true // Allow PDA as owner
+      );
+      
+      // Create release instruction
+      const txSignature = `tx_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+      const releaseInstruction = new ReleaseInstruction({
+        transactionSignature: txSignature
+      });
+      
+      // Admin keypair for signing the transaction
+      const adminKeypair = Keypair.fromSecretKey(
+        bs58.decode(adminPrivateKey)
+      );
+      
+      // Create release transaction
+      const transaction = await this.buildReleaseTransaction(
+        escrowPubkey,
+        sellerTokenAccount,
+        escrowTokenAccount,
+        adminKeypair.publicKey,
+        releaseInstruction
+      );
+      
+      // Sign and send transaction
+      const signature = await this.connection.sendTransaction(
+        transaction,
+        [adminKeypair]
+      );
+      
+      await this.connection.confirmTransaction(signature, 'confirmed');
+      
+      return {
+        transactionId: signature,
+        status: 'confirmed'
+      };
+    } catch (error: any) {
+      logger.error('Error releasing escrow:', error);
+      throw new BlockchainError(`Failed to release escrow: ${error.message}`);
+    }
+  }
+
+  // Build release transaction
+  private async buildReleaseTransaction(
+    escrowPubkey: PublicKey,
+    sellerTokenAccount: PublicKey,
+    escrowTokenAccount: PublicKey,
+    signerPubkey: PublicKey,
+    releaseInstruction: ReleaseInstruction
+  ): Promise<Transaction> {
+    const instructionData = borsh.serialize(
+      escrowInstructionSchema,
+      releaseInstruction
+    );
+    
+    // Create the transaction instruction
+    const transaction = new Transaction().add(
+      new TransactionInstruction({
+        keys: [
+          { pubkey: signerPubkey, isSigner: true, isWritable: false },
+          { pubkey: escrowPubkey, isSigner: false, isWritable: true },
+          { pubkey: escrowTokenAccount, isSigner: false, isWritable: true },
+          { pubkey: sellerTokenAccount, isSigner: false, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        programId: this.programId,
+        data: Buffer.from(instructionData)
+      })
+    );
+    
+    return transaction;
+  }
+
+  // Refund escrow to buyer
+  async refundEscrow(
+    escrowAddress: string,
+    buyerWalletAddress: string,
+    adminPrivateKey: string,
+    amount: number,
+    currency = 'USDC'
+  ): Promise<TransactionResult> {
+    try {
+      logger.info(`Refunding escrow: ${escrowAddress} to buyer: ${buyerWalletAddress}, currency: ${currency}`);
+
+      if (!escrowAddress) {
+        throw new Error('Escrow address is required');
+      }
+      
+      if (!buyerWalletAddress) {
+        throw new Error('Buyer wallet address is required');
+      }
+
+      const escrowPubkey = new PublicKey(escrowAddress);
+      const buyerPubkey = new PublicKey(buyerWalletAddress);
+      const mintAddress = new PublicKey(this.getTokenMintAddress(currency));
+      
+      // Get buyer token account
+      const buyerTokenAccount = await getAssociatedTokenAddress(
+        mintAddress,
+        buyerPubkey
+      );
+      
+      // Get escrow token account
+      const escrowTokenAccount = await getAssociatedTokenAddress(
+        mintAddress,
+        escrowPubkey,
+        true // Allow PDA as owner
+      );
+      
+      // Create refund instruction
+      const txSignature = `tx_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+      const refundInstruction = new RefundInstruction({
+        transactionSignature: txSignature
+      });
+      
+      // Admin keypair for signing the transaction
+      const adminKeypair = Keypair.fromSecretKey(
+        bs58.decode(adminPrivateKey)
+      );
+      
+      // Create refund transaction
+      const transaction = await this.buildRefundTransaction(
+        escrowPubkey,
+        buyerTokenAccount,
+        escrowTokenAccount,
+        adminKeypair.publicKey,
+        refundInstruction
+      );
+      
+      // Sign and send transaction
+      const signature = await this.connection.sendTransaction(
+        transaction,
+        [adminKeypair]
+      );
+      
+      await this.connection.confirmTransaction(signature, 'confirmed');
+      
+      return {
+        transactionId: signature,
+        status: 'confirmed'
+      };
+    } catch (error: any) {
+      logger.error('Error refunding escrow:', error);
+      throw new BlockchainError(`Failed to refund escrow: ${error.message}`);
+    }
+  }
+
+  // Build refund transaction
+  private async buildRefundTransaction(
+    escrowPubkey: PublicKey,
+    buyerTokenAccount: PublicKey,
+    escrowTokenAccount: PublicKey,
+    signerPubkey: PublicKey,
+    refundInstruction: RefundInstruction
+  ): Promise<Transaction> {
+    const instructionData = borsh.serialize(
+      escrowInstructionSchema,
+      refundInstruction
+    );
+    
+    // Create the transaction instruction
+    const transaction = new Transaction().add(
+      new TransactionInstruction({
+        keys: [
+          { pubkey: signerPubkey, isSigner: true, isWritable: false },
+          { pubkey: escrowPubkey, isSigner: false, isWritable: true },
+          { pubkey: escrowTokenAccount, isSigner: false, isWritable: true },
+          { pubkey: buyerTokenAccount, isSigner: false, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        programId: this.programId,
+        data: Buffer.from(instructionData)
+      })
+    );
+    
+    return transaction;
+  }
+
+  // Verify transaction on Solana blockchain
+  async verifyTransaction(signature: string): Promise<{ confirmed: boolean; status: string }> {
+    try {
+      const transaction = await this.connection.getTransaction(signature, {
+        commitment: 'confirmed',
+      });
       
       if (!transaction) {
-        logger.warn(`Transaction not found: ${signature}`);
+        return { confirmed: false, status: 'not_found' };
+      }
+      
+      return {
+        confirmed: true,
+        status: transaction.meta?.err ? 'failed' : 'confirmed'
+      };
+    } catch (error: any) {
+      logger.error('Error verifying transaction:', error);
+      return { confirmed: false, status: 'error' };
+    }
+  }
+
+  getTokenMintAddress(currency: string): string {
+    const network = (NETWORK === 'mainnet') ? 'mainnet' : 'devnet';
+    if (!TOKEN_MINT_ADDRESSES[network][currency]) {
+      throw new Error(`Unsupported currency: ${currency}`);
+    }
+    return TOKEN_MINT_ADDRESSES[network][currency];
+  }
+
+  // Convert USD amount to token amount with proper decimals
+  convertToTokenAmount(amount: number): bigint {
+    // USDC has 6 decimals
+    return BigInt(Math.floor(amount * 1_000_000));
+  }
+
+  // Import an existing wallet to the escrow service
+  async importWallet(privateKey: string): Promise<{ publicKey: string }> {
+    try {
+      const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
+      return { publicKey: keypair.publicKey.toString() };
+    } catch (error: any) {
+      logger.error('Error importing wallet:', error);
+      throw new BlockchainError(`Failed to import wallet: ${error.message}`);
+    }
+  }
+
+  // Generate a new wallet for use with the escrow service
+  async generateWallet(): Promise<{ publicKey: string; privateKey: string }> {
+    const keypair = Keypair.generate();
+    const publicKey = keypair.publicKey.toString();
+    const privateKey = bs58.encode(keypair.secretKey);
+    
+    return { publicKey, privateKey };
+  }
+
+  // Close an escrow if it has timed out
+  async handleEscrowTimeout(escrowAddress: string, adminPrivateKey: string): Promise<boolean> {
+    try {
+      const escrowPubkey = new PublicKey(escrowAddress);
+      
+      // Get the escrow account data
+      const escrowAccountInfo = await this.connection.getAccountInfo(escrowPubkey);
+      
+      if (!escrowAccountInfo) {
+        logger.error(`Escrow account ${escrowAddress} not found`);
         return false;
       }
       
-      if (transaction.meta?.err) {
-        logger.error(`Transaction failed: ${signature}`, transaction.meta.err);
-        return false;
-      }
+      // Parse the account data to get the release timestamp
+      // This would require implementing a proper deserialization function
+      // For now, we'll assume the escrow has timed out
       
-      // Log transaction details - use optional chaining for potentially undefined properties
-      const status = "confirmed"; // Default to confirmed if it reached this point
-      logger.info(`Transaction ${signature} verified: status=${status}`);
+      // Admin keypair for signing the transaction
+      const adminKeypair = Keypair.fromSecretKey(
+        bs58.decode(adminPrivateKey)
+      );
+      
+      // Create timeout instruction (would need to implement in the smart contract)
+      const timeoutTxSignature = `timeout_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+      
+      // For simplicity, using the RefundInstruction for now
+      // In a real implementation, we would have a specific TimeoutInstruction
+      const timeoutInstruction = new RefundInstruction({
+        transactionSignature: timeoutTxSignature
+      });
+      
+      const instructionData = borsh.serialize(
+        escrowInstructionSchema,
+        timeoutInstruction
+      );
+      
+      // Create the transaction instruction
+      const transaction = new Transaction().add(
+        new TransactionInstruction({
+          keys: [
+            { pubkey: adminKeypair.publicKey, isSigner: true, isWritable: false },
+            { pubkey: escrowPubkey, isSigner: false, isWritable: true },
+            // Additional keys would be needed based on the smart contract
+          ],
+          programId: this.programId,
+          data: Buffer.from(instructionData)
+        })
+      );
+      
+      // Sign and send the transaction
+      const signature = await this.connection.sendTransaction(
+        transaction,
+        [adminKeypair]
+      );
+      
+      await this.connection.confirmTransaction(signature, 'confirmed');
       
       return true;
-    } catch (error) {
-      logger.error('Error verifying transaction:', error);
+    } catch (error: any) {
+      logger.error(`Error handling escrow timeout for ${escrowAddress}:`, error);
       return false;
     }
   }
-
 }
 
-export const escrowService = new EscrowService();
-export default escrowService;
+// Export the service instance
+export default new EscrowService();

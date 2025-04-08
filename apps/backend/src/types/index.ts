@@ -18,6 +18,8 @@ export interface Listing {
   category?: string;
   status: ListingStatus;
   images?: string[];
+  condition?: string;
+  location?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -61,9 +63,12 @@ export interface Dispute {
   id: string;
   escrowId: string;
   initiatorId: string;
+  respondentId: string;
   reason: string;
+  details?: string;
   status: DisputeStatus;
   resolution?: string;
+  adminComments?: string;
   resolvedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -75,6 +80,7 @@ export interface Notification {
   type: NotificationType;
   message: string;
   isRead: boolean;
+  metadata?: Record<string, any>;
   createdAt: Date;
 }
 

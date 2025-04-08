@@ -2,7 +2,7 @@ import { Connection } from '@solana/web3.js';
 import logger from '../utils/logger';
 import * as notificationsService from './notifications.service';
 import { EscrowService } from '../blockchain/escrow.service';
-import { EscrowStatus, TransactionStatus } from '../types';
+import { EscrowStatus, TransactionStatus, NotificationType } from '../types';
 import * as escrowsRepository from '../db/escrows.repository';
 import * as usersRepository from '../db/users.repository';
 import * as listingsRepository from '../db/listings.repository';
@@ -12,7 +12,7 @@ interface PendingTransaction {
   signature: string;
   escrowId: string;
   userId: string;
-  type: 'fund' | 'release' | 'refund';
+  type: 'fund' | 'release' | 'refund' | 'dispute';
   createdAt: Date;
   lastChecked?: Date;
   retries: number;
@@ -27,7 +27,7 @@ export async function addTransactionToMonitor(
   signature: string,
   escrowId: string,
   userId: string,
-  type: 'fund' | 'release' | 'refund'
+  type: 'fund' | 'release' | 'refund' | 'dispute'
 ): Promise<string> {
   const id = `${type}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
   
@@ -135,11 +135,11 @@ async function handleConfirmedTransaction(transaction: PendingTransaction): Prom
     switch (transaction.type) {
       case 'fund':
         newStatus = EscrowStatus.FUNDED;
-        notificationMessage = `Your payment of ${escrow.amount} ${escrow.currency} for ${listingTitle} has been confirmed on the blockchain.`;
+        notificationMessage = `Your payment of ${escrow.amount} ${escrow.currency} for ${listingTitle} has been confirmed.`;
         
-        // Also notify seller that funds are available
+        // Also notify seller that escrow has been funded
         if (escrow.sellerId) {
-          sellerNotificationMessage = `The escrow for ${listingTitle} has been funded with ${escrow.amount} ${escrow.currency} and is awaiting your confirmation.`;
+          sellerNotificationMessage = `The buyer has funded the escrow for ${listingTitle} with ${escrow.amount} ${escrow.currency}.`;
           await notificationsService.createTransactionNotification(
             escrow.sellerId,
             sellerNotificationMessage
@@ -149,7 +149,7 @@ async function handleConfirmedTransaction(transaction: PendingTransaction): Prom
         
       case 'release':
         newStatus = EscrowStatus.RELEASED;
-        notificationMessage = `The escrow for ${listingTitle} has been successfully released. The seller has received the funds.`;
+        notificationMessage = `The funds for ${listingTitle} have been released to the seller.`;
         
         // Also notify seller that they've received the funds
         if (escrow.sellerId) {
@@ -175,6 +175,25 @@ async function handleConfirmedTransaction(transaction: PendingTransaction): Prom
         }
         break;
         
+      case 'dispute':
+        newStatus = EscrowStatus.DISPUTED;
+        notificationMessage = `Your dispute for ${listingTitle} has been recorded. Our team will review it shortly.`;
+        
+        // Notify seller about the dispute
+        if (escrow.sellerId) {
+          sellerNotificationMessage = `The buyer has opened a dispute for ${listingTitle}. Our team will contact you shortly.`;
+          await notificationsService.createDisputeNotification(
+            escrow.sellerId,
+            sellerNotificationMessage
+          );
+        }
+        
+        // Notify admin team about the dispute
+        await notificationsService.broadcastSystemNotification(
+          `Dispute opened for escrow ${escrow.id} (listing: ${listingTitle})`
+        );
+        break;
+        
       default:
         logger.warn(`Unknown transaction type: ${transaction.type}`);
         return;
@@ -188,10 +207,17 @@ async function handleConfirmedTransaction(transaction: PendingTransaction): Prom
     );
     
     // Notify the user
-    await notificationsService.createTransactionNotification(
-      transaction.userId,
-      notificationMessage
-    );
+    if (transaction.type === 'dispute') {
+      await notificationsService.createDisputeNotification(
+        transaction.userId,
+        notificationMessage
+      );
+    } else {
+      await notificationsService.createTransactionNotification(
+        transaction.userId,
+        notificationMessage
+      );
+    }
     
     logger.info(`Transaction ${transaction.signature} confirmed. Updated escrow ${transaction.escrowId} to ${newStatus}`);
   } catch (error) {
@@ -232,6 +258,10 @@ async function handleFailedTransaction(transaction: PendingTransaction): Promise
         notificationMessage = `Transaction failed: The refund of ${escrow.amount} ${escrow.currency} for ${listingTitle} could not be confirmed on the blockchain.`;
         break;
         
+      case 'dispute':
+        notificationMessage = `Transaction failed: Your dispute for ${listingTitle} could not be recorded. Please contact customer support.`;
+        break;
+        
       default:
         logger.warn(`Unknown transaction type: ${transaction.type}`);
         return;
@@ -243,11 +273,11 @@ async function handleFailedTransaction(transaction: PendingTransaction): Promise
       notificationMessage
     );
     
-    // Update escrow status to CANCELED if it was a funding transaction that didn't complete
-    if (transaction.type === 'fund' && escrow.status === EscrowStatus.CREATED) {
+    // Update escrow status to 'canceled' if it was a funding transaction that didn't complete
+    if (transaction.type === 'fund' && escrow.status === 'created') {
       await escrowsRepository.updateStatus(
         transaction.escrowId,
-        EscrowStatus.CANCELED,
+        'canceled' as EscrowStatus,
         transaction.signature
       );
     }

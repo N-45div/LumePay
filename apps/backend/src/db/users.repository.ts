@@ -1,5 +1,5 @@
 import { query } from './index';
-import { User } from '../types';
+import { User } from '../types/index';
 
 export const findByWalletAddress = async (walletAddress: string): Promise<User | null> => {
   const result = await query(
@@ -68,15 +68,12 @@ export const getTotalCount = async (): Promise<number> => {
 
 /**
  * Suspend a user account
- * @param userId The ID of the user to suspend
- * @param reason The reason for suspension
+ * @param userId
+ * @param reason
  */
 export const suspendUser = async (userId: string, reason: string): Promise<User | null> => {
-  // In a real application, you would have a 'status' column in users table
-  // For now, we'll add a 'suspended' column if it doesn't exist
   
   try {
-    // First, check if 'suspended' column exists, if not add it
     await query(`
       DO $$ 
       BEGIN 
@@ -90,7 +87,6 @@ export const suspendUser = async (userId: string, reason: string): Promise<User 
       END $$;
     `);
     
-    // Update the user record
     const result = await query(
       `UPDATE users 
        SET suspended = TRUE, 
@@ -170,15 +166,16 @@ export const findUsers = async (
   };
 };
 
-// Helper function to map database row to User type
-const mapDbUserToUser = (user: any): User => {
-  return {
+function mapDbUserToUser(user: any): User {
+  const mappedUser: User = {
     id: user.id,
     walletAddress: user.wallet_address,
-    username: user.username,
-    profileImage: user.profile_image,
-    reputationScore: parseFloat(user.reputation_score || 0),
+    username: user.username || undefined,
+    profileImage: user.profile_image || undefined,
+    reputationScore: parseFloat(user.reputation_score || '0'),
     createdAt: user.created_at,
     updatedAt: user.updated_at
   };
-};
+  
+  return mappedUser;
+}

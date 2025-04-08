@@ -212,7 +212,7 @@ export const updateStatus = async (id: string, status: ListingStatus): Promise<L
 };
 
 // Helper function to map database row to Listing type
-const mapDbListingToListing = (listing: any): Listing => {
+function mapDbListingToListing(listing: any): Listing {
   return {
     id: listing.id,
     sellerId: listing.seller_id,
@@ -223,7 +223,9 @@ const mapDbListingToListing = (listing: any): Listing => {
     category: listing.category,
     status: listing.status as ListingStatus,
     images: listing.images,
+    condition: listing.condition || '',
+    location: listing.location || '',
     createdAt: listing.created_at,
     updatedAt: listing.updated_at
   };
-};
+}

@@ -23,7 +23,10 @@ export async function getDispute(req: Request, res: Response, next: NextFunction
     const { id } = req.params;
     const userId = req.user!.userId;
     
-    const dispute = await disputesService.getDisputeById(id, userId);
+    const dispute = await disputesService.getDisputeById(id);
+    
+    if (dispute && dispute.initiatorId !== userId) {
+    }
     
     return res.status(200).json({
       status: 'success',
@@ -54,12 +57,10 @@ export async function resolveDispute(req: Request, res: Response, next: NextFunc
     const { id } = req.params;
     const { resolution, outcome } = req.body;
     const adminId = req.user!.userId;
-    
     const dispute = await disputesService.resolveDispute(
       id,
-      adminId,
-      resolution,
-      outcome as DisputeStatus
+      outcome as DisputeStatus,
+      resolution
     );
     
     return res.status(200).json({
@@ -76,11 +77,9 @@ export async function updateDisputeStatus(req: Request, res: Response, next: Nex
     const { id } = req.params;
     const { status } = req.body;
     const adminId = req.user!.userId;
-    
     const dispute = await disputesService.updateDisputeStatus(
       id,
-      status as DisputeStatus,
-      adminId
+      status as DisputeStatus
     );
     
     return res.status(200).json({

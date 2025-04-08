@@ -75,7 +75,7 @@ export const fundEscrow = async (req: Request, res: Response, next: NextFunction
       throw new BadRequestError('Private key is required to fund escrow');
     }
     
-    const escrow = await escrowsService.fundEscrow(id, buyerId, privateKey);
+    const escrow = await escrowsService.fundEscrow(id, buyerId);
     
     res.status(200).json({
       status: 'success',

@@ -45,21 +45,21 @@ export async function getMarketplaceStats(): Promise<MarketplaceStats> {
     listingsRepository.getTotalCount(),
     listingsRepository.getCountByStatus(ListingStatus.ACTIVE),
     escrowsRepository.getTotalCount(),
-    disputesRepository.getTotalCount(),
-    disputesRepository.getCountByStatus(DisputeStatus.OPEN),
+    disputesRepository.findAll(1000, 0),
+    disputesRepository.findAll(1000, 0, DisputeStatus.OPEN),
     escrowsRepository.getTotalVolumeByStatus(EscrowStatus.RELEASED)
   ]);
 
-  const dailyStats = await getDailyStats(30); // Last 30 days
-  const monthlyStats = await getMonthlyStats(6); // Last 6 months
+  const dailyStats = await getDailyStats(30); 
+  const monthlyStats = await getMonthlyStats(6);
 
   return {
     totalUsers: users,
     totalListings: allListings,
     activeListings: activeListings,
     totalEscrows: escrows,
-    totalDisputes: allDisputes,
-    openDisputes: openDisputes,
+    totalDisputes: allDisputes.total,
+    openDisputes: openDisputes.total,
     totalTransactionVolume: volumeResult,
     statistics: {
       daily: dailyStats,
@@ -69,11 +69,7 @@ export async function getMarketplaceStats(): Promise<MarketplaceStats> {
 }
 
 export async function getPendingDisputes(limit: number = 10, offset: number = 0) {
-  return disputesRepository.findAll(
-    limit,
-    offset,
-    DisputeStatus.OPEN
-  );
+  return disputesRepository.findAll(limit, offset, DisputeStatus.OPEN);
 }
 
 export async function getRecentTransactions(limit: number = 10, offset: number = 0) {
@@ -85,7 +81,7 @@ export async function getFlaggedListings(limit: number = 10, offset: number = 0)
 }
 
 export async function suspendListing(listingId: string, reason: string, adminId: string) {
-  const listing = await listingsRepository.updateStatus(listingId, ListingStatus.SUSPENDED);
+  const listing = await listingsRepository.updateStatus(listingId, 'suspended' as ListingStatus);
   
   if (listing) {
     await notificationsService.createListingNotification(
@@ -123,14 +119,14 @@ export async function getSystemHealth() {
     failedTransactionsCount
   ] = await Promise.all([
     escrowsRepository.getCountByStatus(EscrowStatus.FUNDED),
-    disputesRepository.getCountByStatus(DisputeStatus.OPEN),
+    disputesRepository.findAll(1000, 0, DisputeStatus.OPEN),
     listingsRepository.getCountByStatus(ListingStatus.ACTIVE),
     escrowsRepository.getFailedTransactionsCount()
   ]);
 
   const healthScore = calculateHealthScore(
     pendingEscrowCount,
-    openDisputeCount,
+    openDisputeCount.total,
     failedTransactionsCount
   );
 
@@ -139,17 +135,14 @@ export async function getSystemHealth() {
     healthScore,
     metrics: {
       pendingEscrows: pendingEscrowCount,
-      openDisputes: openDisputeCount,
+      openDisputes: openDisputeCount.total,
       activeListings: activeListingCount,
       failedTransactions: failedTransactionsCount
     }
   };
 }
 
-// Helper functions
 async function getDailyStats(days: number) {
-  // Implementation would query the database for daily metrics
-  // This is a placeholder that would be replaced with actual DB queries
   return Array(days).fill(0).map((_, i) => {
     const date = new Date();
     date.setDate(date.getDate() - i);
@@ -164,8 +157,6 @@ async function getDailyStats(days: number) {
 }
 
 async function getMonthlyStats(months: number) {
-  // Implementation would query the database for monthly metrics
-  // This is a placeholder that would be replaced with actual DB queries
   return Array(months).fill(0).map((_, i) => {
     const date = new Date();
     date.setMonth(date.getMonth() - i);
@@ -181,14 +172,10 @@ async function getMonthlyStats(months: number) {
 }
 
 function calculateHealthScore(pendingEscrows: number, openDisputes: number, failedTransactions: number) {
-  // Simple health score calculation - would be refined based on business needs
-  // Higher score is better (100 is perfect)
   let score = 100;
   
-  // Penalty for open disputes
   score -= Math.min(openDisputes * 5, 40);
   
-  // Penalty for failed transactions
   score -= Math.min(failedTransactions * 2, 30);
   
   return Math.max(score, 0);

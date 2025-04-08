@@ -6,7 +6,7 @@ import { ListingStatus } from '../../types';
 export const createListing = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const sellerId = req.user!.userId;
-    const { title, description, price, currency, category, images } = req.body;
+    const { title, description, price, currency, category, images, condition, location } = req.body;
     
     if (!title || !price || !currency) {
       throw new BadRequestError('Title, price, and currency are required');
@@ -18,7 +18,9 @@ export const createListing = async (req: Request, res: Response, next: NextFunct
       price: parseFloat(price),
       currency,
       category,
-      images
+      images,
+      condition,
+      location
     });
     
     res.status(201).json({

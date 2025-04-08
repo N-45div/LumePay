@@ -31,14 +31,16 @@ export async function markAllAsRead(userId: string): Promise<void> {
 export async function createNotification(
   userId: string,
   type: NotificationType,
-  message: string
+  message: string,
+  metadata?: Record<string, any>
 ): Promise<Notification> {
   logger.info(`Creating ${type} notification for user ${userId}`);
   const notification = await notificationsRepository.createNotification({
     userId,
     type,
     message,
-    isRead: false
+    isRead: false,
+    metadata: metadata ? { ...metadata } : undefined
   });
 
   try {
@@ -55,37 +57,42 @@ export async function createNotification(
 
 export async function createTransactionNotification(
   userId: string,
-  message: string
+  message: string,
+  metadata?: Record<string, any>
 ): Promise<Notification> {
-  return await createNotification(userId, NotificationType.TRANSACTION, message);
+  return await createNotification(userId, NotificationType.TRANSACTION, message, metadata);
 }
 
 export async function createEscrowNotification(
   userId: string,
-  message: string
+  message: string,
+  metadata?: Record<string, any>
 ): Promise<Notification> {
-  return await createNotification(userId, NotificationType.ESCROW, message);
+  return await createNotification(userId, NotificationType.ESCROW, message, metadata);
 }
 
 export async function createListingNotification(
   userId: string,
-  message: string
+  message: string,
+  metadata?: Record<string, any>
 ): Promise<Notification> {
-  return await createNotification(userId, NotificationType.LISTING, message);
+  return await createNotification(userId, NotificationType.LISTING, message, metadata);
 }
 
 export async function createSystemNotification(
   userId: string,
-  message: string
+  message: string,
+  metadata?: Record<string, any>
 ): Promise<Notification> {
-  return await createNotification(userId, NotificationType.SYSTEM, message);
+  return await createNotification(userId, NotificationType.SYSTEM, message, metadata);
 }
 
 export async function createDisputeNotification(
   userId: string,
-  message: string
+  message: string,
+  metadata?: Record<string, any>
 ): Promise<Notification> {
-  return await createNotification(userId, NotificationType.DISPUTE, message);
+  return await createNotification(userId, NotificationType.DISPUTE, message, metadata);
 }
 
 export async function broadcastSystemNotification(message: string): Promise<void> {

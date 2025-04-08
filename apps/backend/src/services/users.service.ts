@@ -1,7 +1,7 @@
 import * as usersRepository from '../db/users.repository';
 import { generateToken } from '../utils/jwt';
 import { BadRequestError, NotFoundError } from '../utils/errors';
-import { User } from '../types';
+import { User } from '../types/index';
 
 export const authenticateUser = async (walletAddress: string): Promise<{ user: User; token: string }> => {
   let user = await usersRepository.findByWalletAddress(walletAddress);
