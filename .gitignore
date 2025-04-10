@@ -61,10 +61,12 @@ tmp/
 # Project specific
 Progress&details.txt
 project-doc
-project-doc-general
 .windsurfrules
 project-structure
+perena-usd-integration.md
 DEVPROGRESS.md
+project-doc-general
+README.md
 
 # Security - SSH Keys
 *ssh-agent*
