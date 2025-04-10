@@ -1,7 +1,16 @@
 import { query } from './index';
-import { Escrow, EscrowStatus } from '../types';
+import { Escrow, EscrowStatus, DisputeResolutionMode, MultiSigStatus } from '../types';
 
-export const create = async (escrowData: Omit<Escrow, 'id' | 'createdAt' | 'updatedAt'>): Promise<Escrow> => {
+type CreateEscrowData = Omit<Escrow, 'id' | 'createdAt' | 'updatedAt'> & {
+  isMultiSig?: boolean;
+  multiSigSignatures?: MultiSigStatus;
+  isTimeLocked?: boolean;
+  unlockTime?: Date;
+  autoResolveAfterDays?: number;
+  disputeResolutionMode?: DisputeResolutionMode;
+};
+
+export const create = async (escrowData: CreateEscrowData): Promise<Escrow> => {
   const { 
     listingId, 
     buyerId, 
@@ -11,13 +20,21 @@ export const create = async (escrowData: Omit<Escrow, 'id' | 'createdAt' | 'upda
     status, 
     escrowAddress, 
     releaseTime, 
-    transactionSignature 
+    transactionSignature,
+    isMultiSig,
+    multiSigSignatures,
+    isTimeLocked,
+    unlockTime,
+    autoResolveAfterDays,
+    disputeResolutionMode
   } = escrowData;
   
   const result = await query(
     `INSERT INTO escrows 
-     (listing_id, buyer_id, seller_id, amount, currency, status, escrow_address, release_time, transaction_signature) 
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+     (listing_id, buyer_id, seller_id, amount, currency, status, escrow_address, release_time, 
+      transaction_signature, is_multi_sig, multi_sig_signatures, is_time_locked, unlock_time, 
+      auto_resolve_after_days, dispute_resolution_mode) 
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) 
      RETURNING *`,
     [
       listingId, 
@@ -28,7 +45,13 @@ export const create = async (escrowData: Omit<Escrow, 'id' | 'createdAt' | 'upda
       status, 
       escrowAddress, 
       releaseTime, 
-      transactionSignature
+      transactionSignature,
+      isMultiSig || false,
+      multiSigSignatures ? JSON.stringify(multiSigSignatures) : null,
+      isTimeLocked || false,
+      unlockTime,
+      autoResolveAfterDays,
+      disputeResolutionMode
     ]
   );
 
@@ -116,6 +139,120 @@ export const updateStatus = async (
      WHERE id = $1
      RETURNING *`,
     [id, status, transactionSignature]
+  );
+  
+  if (result.rows.length === 0) {
+    return null;
+  }
+  
+  return mapDbEscrowToEscrow(result.rows[0]);
+};
+
+export const updateMultiSigStatus = async (
+  id: string,
+  multiSigData: {
+    buyerSigned?: boolean,
+    sellerSigned?: boolean,
+    adminSigned?: boolean
+  }
+): Promise<Escrow | null> => {
+  // First get the current state
+  const current = await findById(id);
+  if (!current) {
+    return null;
+  }
+
+  const extendedEscrow = current as (Escrow & {
+    isMultiSig?: boolean;
+    multiSigSignatures?: MultiSigStatus;
+    isTimeLocked?: boolean;
+    unlockTime?: Date;
+    autoResolveAfterDays?: number;
+    disputeResolutionMode?: DisputeResolutionMode;
+  });
+
+  const signatures = extendedEscrow.multiSigSignatures || {
+    buyerSigned: false,
+    sellerSigned: false,
+    adminSigned: false,
+    requiredSignatures: 2,
+    completedSignatures: 0
+  };
+
+  if (multiSigData.buyerSigned !== undefined && !signatures.buyerSigned && multiSigData.buyerSigned) {
+    signatures.buyerSigned = true;
+    signatures.completedSignatures += 1;
+  }
+  
+  if (multiSigData.sellerSigned !== undefined && !signatures.sellerSigned && multiSigData.sellerSigned) {
+    signatures.sellerSigned = true;
+    signatures.completedSignatures += 1;
+  }
+  
+  if (multiSigData.adminSigned !== undefined && !signatures.adminSigned && multiSigData.adminSigned) {
+    signatures.adminSigned = true;
+    signatures.completedSignatures += 1;
+  }
+
+  let newStatus = current.status;
+  if (signatures.completedSignatures >= signatures.requiredSignatures) {
+    if (current.status === 'awaiting_signatures' as EscrowStatus) {
+      newStatus = 'funded' as EscrowStatus;
+    }
+  }
+  
+  const result = await query(
+    `UPDATE escrows 
+     SET multi_sig_signatures = $2,
+         status = $3,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [id, JSON.stringify(signatures), newStatus]
+  );
+  
+  if (result.rows.length === 0) {
+    return null;
+  }
+  
+  return mapDbEscrowToEscrow(result.rows[0]);
+};
+
+export const updateTimeLockedEscrow = async (
+  id: string,
+  unlockTime: Date
+): Promise<Escrow | null> => {
+  const result = await query(
+    `UPDATE escrows 
+     SET is_time_locked = TRUE,
+         unlock_time = $2,
+         status = $3,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [id, unlockTime, 'time_locked' as EscrowStatus]
+  );
+  
+  if (result.rows.length === 0) {
+    return null;
+  }
+  
+  return mapDbEscrowToEscrow(result.rows[0]);
+};
+
+export const updateDisputeResolutionMode = async (
+  id: string,
+  disputeResolutionMode: DisputeResolutionMode,
+  autoResolveAfterDays?: number
+): Promise<Escrow | null> => {
+  const result = await query(
+    `UPDATE escrows 
+     SET dispute_resolution_mode = $2,
+         auto_resolve_after_days = $3,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [id, disputeResolutionMode, autoResolveAfterDays]
   );
   
   if (result.rows.length === 0) {
@@ -254,9 +391,53 @@ export async function getInactiveEscrows(userId: string): Promise<Escrow[]> {
   return result.rows.map(mapDbEscrowToEscrow);
 }
 
-// Helper function to map database row to Escrow type
-const mapDbEscrowToEscrow = (escrow: any): Escrow => {
-  return {
+export const findEscrowsEligibleForAutoRelease = async (): Promise<Escrow[]> => {
+  const now = new Date();
+  
+  // Find time-locked escrows that have reached their unlock time
+  const result = await query(
+    `SELECT * FROM escrows
+     WHERE status = $1
+     AND is_time_locked = TRUE
+     AND unlock_time IS NOT NULL
+     AND unlock_time <= $2`,
+    ['time_locked' as EscrowStatus, now]
+  );
+  
+  return result.rows.map(mapDbEscrowToEscrow);
+};
+
+export const findEscrowsEligibleForAutoResolve = async (): Promise<Escrow[]> => {
+  const now = new Date();
+  const result = await query(
+    `SELECT * FROM escrows
+     WHERE status = $1
+     AND dispute_resolution_mode IS NOT NULL
+     AND dispute_resolution_mode != $2
+     AND auto_resolve_after_days IS NOT NULL
+     AND updated_at <= $3 - (auto_resolve_after_days * INTERVAL '1 day')`,
+    ['disputed' as EscrowStatus, DisputeResolutionMode.MANUAL, now]
+  );
+  
+  return result.rows.map(mapDbEscrowToEscrow);
+};
+
+const mapDbEscrowToEscrow = (escrow: any): Escrow & {
+  isMultiSig?: boolean;
+  multiSigSignatures?: MultiSigStatus;
+  isTimeLocked?: boolean;
+  unlockTime?: Date;
+  autoResolveAfterDays?: number;
+  disputeResolutionMode?: DisputeResolutionMode;
+} => {
+  const result: Escrow & {
+    isMultiSig?: boolean;
+    multiSigSignatures?: MultiSigStatus;
+    isTimeLocked?: boolean;
+    unlockTime?: Date;
+    autoResolveAfterDays?: number;
+    disputeResolutionMode?: DisputeResolutionMode;
+  } = {
     id: escrow.id,
     listingId: escrow.listing_id,
     buyerId: escrow.buyer_id,
@@ -268,6 +449,14 @@ const mapDbEscrowToEscrow = (escrow: any): Escrow => {
     releaseTime: escrow.release_time,
     transactionSignature: escrow.transaction_signature,
     createdAt: escrow.created_at,
-    updatedAt: escrow.updated_at
+    updatedAt: escrow.updated_at,
+    isMultiSig: escrow.is_multi_sig,
+    multiSigSignatures: escrow.multi_sig_signatures ? JSON.parse(escrow.multi_sig_signatures) : undefined,
+    isTimeLocked: escrow.is_time_locked,
+    unlockTime: escrow.unlock_time,
+    autoResolveAfterDays: escrow.auto_resolve_after_days,
+    disputeResolutionMode: escrow.dispute_resolution_mode
   };
+
+  return result;
 };

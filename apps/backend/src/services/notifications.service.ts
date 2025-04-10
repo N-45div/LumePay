@@ -95,6 +95,14 @@ export async function createDisputeNotification(
   return await createNotification(userId, NotificationType.DISPUTE, message, metadata);
 }
 
+export async function createReputationNotification(
+  userId: string,
+  message: string,
+  metadata?: Record<string, any>
+): Promise<Notification> {
+  return await createNotification(userId, 'reputation' as NotificationType, message, metadata);
+}
+
 export async function broadcastSystemNotification(message: string): Promise<void> {
   logger.info(`Broadcasting system notification: ${message}`);
   

@@ -5,10 +5,12 @@ import { UnauthorizedError } from '../../utils/errors';
 declare global {
   namespace Express {
     interface Request {
-      user: {
+      user?: {
         userId: string;
         walletAddress: string;
       };
+      userId?: string;
+      walletAddress?: string;
     }
   }
 }

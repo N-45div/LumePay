@@ -4,8 +4,12 @@ export interface User {
   username?: string;
   profileImage?: string;
   reputationScore: number;
+  trustScore?: number;
+  verificationLevel?: VerificationLevel;
+  isVerified?: boolean;
   createdAt: Date;
   updatedAt: Date;
+  isAdmin?: boolean;
 }
 
 export interface Listing {
@@ -37,16 +41,34 @@ export interface Escrow {
   transactionSignature?: string;
   createdAt: Date;
   updatedAt: Date;
+  isMultiSig?: boolean;
+  multiSigSignatures?: MultiSigStatus;
+  isTimeLocked?: boolean;
+  unlockTime?: Date;
+  autoResolveAfterDays?: number;
+  disputeResolutionMode?: DisputeResolutionMode;
+}
+
+export interface MultiSigStatus {
+  buyerSigned: boolean;
+  sellerSigned: boolean;
+  adminSigned?: boolean;
+  requiredSignatures: number;
+  completedSignatures: number;
 }
 
 export interface Transaction {
   id: string;
-  escrowId?: string;
-  transactionType: TransactionType;
+  userId: string;
+  type: TransactionType;
   amount: number;
-  signature?: string;
+  currency: string;
   status: TransactionStatus;
+  transactionHash?: string;
+  sourceId?: string;
+  metadata?: Record<string, any>;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Review {
@@ -57,6 +79,8 @@ export interface Review {
   rating: number;
   comment?: string;
   createdAt: Date;
+  reviewerUsername?: string;
+  reviewerProfileImage?: string;
 }
 
 export interface Dispute {
@@ -70,6 +94,20 @@ export interface Dispute {
   resolution?: string;
   adminComments?: string;
   resolvedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ReputationRecord {
+  id: string;
+  userId: string;
+  score: number;
+  transactionCount: number;
+  reviewCount: number;
+  disputeResolutionRatio: number;
+  verificationLevel: VerificationLevel;
+  blockchainAddress?: string;
+  transactionSignature?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -98,7 +136,10 @@ export enum EscrowStatus {
   REFUNDED = 'refunded',
   DISPUTED = 'disputed',
   EXPIRED = 'expired',
-  CANCELED = 'canceled'
+  CANCELED = 'canceled',
+  AWAITING_SIGNATURES = 'awaiting_signatures',
+  TIME_LOCKED = 'time_locked',
+  AUTO_RESOLVED = 'auto_resolved'
 }
 
 export enum TransactionType {
@@ -110,8 +151,10 @@ export enum TransactionType {
 
 export enum TransactionStatus {
   PENDING = 'pending',
-  CONFIRMED = 'confirmed',
-  FAILED = 'failed'
+  PROCESSING = 'processing',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  CANCELED = 'canceled'
 }
 
 export enum DisputeStatus {
@@ -123,12 +166,28 @@ export enum DisputeStatus {
   CLOSED = 'closed'
 }
 
+export enum VerificationLevel {
+  NONE = 'none',
+  BASIC = 'basic',
+  VERIFIED = 'verified',
+  TRUSTED = 'trusted'
+}
+
 export enum NotificationType {
   TRANSACTION = 'transaction',
   ESCROW = 'escrow',
   LISTING = 'listing',
   SYSTEM = 'system',
-  DISPUTE = 'dispute'
+  DISPUTE = 'dispute',
+  REPUTATION = 'reputation'
+}
+
+export enum DisputeResolutionMode {
+  MANUAL = 'manual',
+  AUTO_BUYER = 'auto_buyer',
+  AUTO_SELLER = 'auto_seller',
+  AUTO_SPLIT = 'auto_split',
+  AUTO_REPUTATION = 'auto_reputation'
 }
 
 export interface JwtPayload {

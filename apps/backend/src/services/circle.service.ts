@@ -1,12 +1,12 @@
 import axios from 'axios';
 import { circleConfig } from '../config/circle';
-import { v4 as uuidv4 } from 'uuid';
-import { BadRequestError } from '../utils/errors';
 import * as walletsRepository from '../db/wallets.repository';
 import * as transactionsRepository from '../db/transactions.repository';
-import { TransactionStatus } from '../types';
+import * as usersRepository from '../db/users.repository';
+import { NotFoundError, BadRequestError } from '../utils/errors';
+import { TransactionStatus, TransactionType } from '../types';
+import { v4 as uuidv4 } from 'uuid';
 
-// Circle API response types
 interface CircleApiResponse<T> {
   data: T;
 }
@@ -384,3 +384,94 @@ function mapCircleStatusToInternal(circleStatus: string): TransactionStatus {
       return TransactionStatus.PENDING;
   }
 }
+
+interface TransactionCreateData {
+  userId: string;
+  type: TransactionType;
+  amount: number;
+  currency: string;
+  status: TransactionStatus;
+  transactionHash?: string;
+  sourceId?: string;
+  metadata?: Record<string, any>;
+}
+
+export const releasePartialFromEscrow = async (
+  escrowId: string,
+  amount: number,
+  recipientId: string
+): Promise<any> => {
+  
+  const recipient = await usersRepository.findById(recipientId);
+  if (!recipient) {
+    throw new NotFoundError('Recipient not found');
+  }
+  
+  const transferId = `partial-release-${uuidv4()}`;
+  
+  await transactionsRepository.create({
+    userId: recipientId,
+    type: TransactionType.WITHDRAWAL,
+    amount,
+    currency: 'USDC',
+    status: 'completed' as TransactionStatus,
+    transactionHash: transferId,
+    sourceId: escrowId,
+    transferId: transferId,
+    metadata: {
+      escrowId,
+      partialRelease: true
+    }
+  } as any);
+
+  return {
+    transfer: {
+      id: transferId,
+      status: 'complete',
+      amount: {
+        amount: amount.toString(),
+        currency: 'USD'
+      }
+    }
+  };
+};
+
+export const refundPartialFromEscrow = async (
+  escrowId: string,
+  amount: number,
+  recipientId: string
+): Promise<any> => {
+  
+  const recipient = await usersRepository.findById(recipientId);
+  if (!recipient) {
+    throw new NotFoundError('Recipient not found');
+  }
+  
+  const transferId = `partial-refund-${uuidv4()}`;
+  
+  await transactionsRepository.create({
+    userId: recipientId,
+    type: TransactionType.REFUND,
+    amount,
+    currency: 'USDC',
+    status: 'completed' as TransactionStatus,
+    transactionHash: transferId,
+    sourceId: escrowId,
+    transferId: transferId,
+    metadata: {
+      escrowId,
+      partialRefund: true
+    }
+  } as any);
+  
+  return {
+    transfer: {
+      id: transferId,
+      status: 'complete',
+      amount: {
+        amount: amount.toString(),
+        currency: 'USD'
+      }
+    }
+  };
+};
