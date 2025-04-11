@@ -5,6 +5,12 @@ import { connectRedis } from './utils/redis';
 import { runMigrations } from './db/migrations';
 import { WebSocketService } from './services/websocket.service';
 import { createServer } from 'http';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
+import { errorHandler } from './api/middleware/error-handler';
+import performanceMonitor from './middleware/performance-monitor';
 
 const startServer = async () => {
   try {
@@ -21,16 +27,22 @@ const startServer = async () => {
     if (!redisConnected) {
       logger.warn('Redis connection failed - proceeding with limited functionality');
     }
-    
-    // Create HTTP server
+ 
     const httpServer = createServer(app);
     
-    // Initialize WebSocket service
+    app.use(helmet());
+    app.use(cors());
+    app.use(compression());
+    app.use(express.json());
+    app.use(performanceMonitor);
+    
     logger.info('Initializing WebSocket service...');
     const wsService = WebSocketService.getInstance();
     wsService.initialize(httpServer);
     
-    // Start the server
+    httpServer.listen(config.server.port, () => {
+      logger.info(`Server running in ${config.server.env} mode on port ${config.server.port}`);
+    });
     httpServer.listen(config.server.port, () => {
       logger.info(`Server running in ${config.server.env} mode on port ${config.server.port}`);
     });

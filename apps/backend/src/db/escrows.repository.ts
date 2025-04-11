@@ -1,5 +1,6 @@
 import { query } from './index';
 import { Escrow, EscrowStatus, DisputeResolutionMode, MultiSigStatus } from '../types';
+import cacheService from '../services/cache.service';
 
 type CreateEscrowData = Omit<Escrow, 'id' | 'createdAt' | 'updatedAt'> & {
   isMultiSig?: boolean;
@@ -56,17 +57,30 @@ export const create = async (escrowData: CreateEscrowData): Promise<Escrow> => {
   );
 
   const escrow = result.rows[0];
+  await cacheService.set(`escrow:${escrow.id}`, mapDbEscrowToEscrow(escrow), { ttl: 300 });
+  if (escrow.listing_id) {
+    await cacheService.set(`escrow:listing:${escrow.listing_id}`, mapDbEscrowToEscrow(escrow), { ttl: 300 });
+  }
   return mapDbEscrowToEscrow(escrow);
 };
 
 export const findById = async (id: string): Promise<Escrow | null> => {
+  const cacheKey = `escrow:${id}`;
+  const cachedEscrow = await cacheService.get<Escrow>(cacheKey);
+  
+  if (cachedEscrow) {
+    return cachedEscrow;
+  }
+  
   const result = await query('SELECT * FROM escrows WHERE id = $1', [id]);
 
   if (result.rows.length === 0) {
     return null;
   }
 
-  return mapDbEscrowToEscrow(result.rows[0]);
+  const escrow = mapDbEscrowToEscrow(result.rows[0]);
+  await cacheService.set(cacheKey, escrow, { ttl: 300 });
+  return escrow;
 };
 
 export const findByAddress = async (escrowAddress: string): Promise<Escrow | null> => {
@@ -145,7 +159,15 @@ export const updateStatus = async (
     return null;
   }
   
-  return mapDbEscrowToEscrow(result.rows[0]);
+  await cacheService.del(`escrow:${id}`);
+  
+  const updatedEscrow = mapDbEscrowToEscrow(result.rows[0]);
+  
+  if (updatedEscrow.listingId) {
+    await cacheService.del(`escrow:listing:${updatedEscrow.listingId}`);
+  }
+  
+  return updatedEscrow;
 };
 
 export const updateMultiSigStatus = async (
@@ -215,7 +237,15 @@ export const updateMultiSigStatus = async (
     return null;
   }
   
-  return mapDbEscrowToEscrow(result.rows[0]);
+  await cacheService.del(`escrow:${id}`);
+  
+  const updatedEscrow = mapDbEscrowToEscrow(result.rows[0]);
+  
+  if (updatedEscrow.listingId) {
+    await cacheService.del(`escrow:listing:${updatedEscrow.listingId}`);
+  }
+  
+  return updatedEscrow;
 };
 
 export const updateTimeLockedEscrow = async (
@@ -237,7 +267,15 @@ export const updateTimeLockedEscrow = async (
     return null;
   }
   
-  return mapDbEscrowToEscrow(result.rows[0]);
+  await cacheService.del(`escrow:${id}`);
+  
+  const updatedEscrow = mapDbEscrowToEscrow(result.rows[0]);
+  
+  if (updatedEscrow.listingId) {
+    await cacheService.del(`escrow:listing:${updatedEscrow.listingId}`);
+  }
+  
+  return updatedEscrow;
 };
 
 export const updateDisputeResolutionMode = async (
@@ -259,7 +297,15 @@ export const updateDisputeResolutionMode = async (
     return null;
   }
   
-  return mapDbEscrowToEscrow(result.rows[0]);
+  await cacheService.del(`escrow:${id}`);
+  
+  const updatedEscrow = mapDbEscrowToEscrow(result.rows[0]);
+  
+  if (updatedEscrow.listingId) {
+    await cacheService.del(`escrow:listing:${updatedEscrow.listingId}`);
+  }
+  
+  return updatedEscrow;
 };
 
 /**
@@ -358,7 +404,15 @@ export async function expireEscrow(id: string): Promise<Escrow> {
     throw new Error(`Escrow with id ${id} not found`);
   }
   
-  return mapDbEscrowToEscrow(result.rows[0]);
+  await cacheService.del(`escrow:${id}`);
+  
+  const updatedEscrow = mapDbEscrowToEscrow(result.rows[0]);
+  
+  if (updatedEscrow.listingId) {
+    await cacheService.del(`escrow:listing:${updatedEscrow.listingId}`);
+  }
+  
+  return updatedEscrow;
 }
 
 export async function cancelEscrow(id: string): Promise<Escrow> {
@@ -376,7 +430,15 @@ export async function cancelEscrow(id: string): Promise<Escrow> {
     throw new Error(`Escrow with id ${id} not found`);
   }
   
-  return mapDbEscrowToEscrow(result.rows[0]);
+  await cacheService.del(`escrow:${id}`);
+  
+  const updatedEscrow = mapDbEscrowToEscrow(result.rows[0]);
+  
+  if (updatedEscrow.listingId) {
+    await cacheService.del(`escrow:listing:${updatedEscrow.listingId}`);
+  }
+  
+  return updatedEscrow;
 }
 
 export async function getInactiveEscrows(userId: string): Promise<Escrow[]> {
@@ -393,8 +455,7 @@ export async function getInactiveEscrows(userId: string): Promise<Escrow[]> {
 
 export const findEscrowsEligibleForAutoRelease = async (): Promise<Escrow[]> => {
   const now = new Date();
-  
-  // Find time-locked escrows that have reached their unlock time
+
   const result = await query(
     `SELECT * FROM escrows
      WHERE status = $1

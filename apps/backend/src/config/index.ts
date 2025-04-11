@@ -49,6 +49,14 @@ export const config = {
   logging: {
     level: process.env.LOG_LEVEL || 'info' as string,
   },
+  perena: {
+    apiKey: process.env.PERENA_API_KEY || '' as string,
+    apiUrl: process.env.PERENA_API_URL || 'https://api.perena.io/v1' as string,
+  },
+  reclaim: {
+    apiKey: process.env.RECLAIM_API_KEY || '' as string,
+    apiUrl: process.env.RECLAIM_API_URL || 'https://api.reclaimprotocol.org/v1' as string,
+  }
 };
 
 export default config;

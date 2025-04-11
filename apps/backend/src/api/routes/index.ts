@@ -9,6 +9,8 @@ import disputesRoutes from './disputes.routes';
 import paymentsRoutes from './payments.routes';
 import solanaPayRoutes from './solana-pay.routes';
 import reputationRoutes from './reputation.routes';
+import perenaRoutes from './perena.routes';
+import reclaimRoutes from './reclaim.routes';
 
 const router = Router();
 
@@ -22,5 +24,7 @@ router.use('/admin', adminRoutes);
 router.use('/payments', paymentsRoutes);
 router.use('/solana-pay', solanaPayRoutes);
 router.use('/reputation', reputationRoutes);
+router.use('/perena', perenaRoutes);
+router.use('/reclaim', reclaimRoutes);
 
 export default router;

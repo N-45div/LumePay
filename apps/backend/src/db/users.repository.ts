@@ -51,6 +51,71 @@ export const updateProfile = async (
   return mapDbUserToUser(result.rows[0]);
 };
 
+export const update = async (
+  id: string,
+  data: Partial<{
+    username?: string;
+    profileImage?: string;
+    reputationScore?: number;
+    verificationLevel?: string;
+    trustScore?: number;
+    isVerified?: boolean;
+    isAdmin?: boolean;
+  }>
+): Promise<User> => {
+  const updates: string[] = [];
+  const values: any[] = [id];
+  let paramIndex = 2;
+  
+  if (data.username !== undefined) {
+    updates.push(`username = $${paramIndex++}`);
+    values.push(data.username);
+  }
+  
+  if (data.profileImage !== undefined) {
+    updates.push(`profile_image = $${paramIndex++}`);
+    values.push(data.profileImage);
+  }
+  
+  if (data.reputationScore !== undefined) {
+    updates.push(`reputation_score = $${paramIndex++}`);
+    values.push(data.reputationScore);
+  }
+  
+  if (data.verificationLevel !== undefined) {
+    updates.push(`verification_level = $${paramIndex++}`);
+    values.push(data.verificationLevel);
+  }
+  
+  if (data.trustScore !== undefined) {
+    updates.push(`trust_score = $${paramIndex++}`);
+    values.push(data.trustScore);
+  }
+  
+  if (data.isVerified !== undefined) {
+    updates.push(`is_verified = $${paramIndex++}`);
+    values.push(data.isVerified);
+  }
+  
+  if (data.isAdmin !== undefined) {
+    updates.push(`is_admin = $${paramIndex++}`);
+    values.push(data.isAdmin);
+  }
+  
+  if (updates.length === 0) {
+    return (await findById(id)) as User;
+  }
+  
+  updates.push(`updated_at = NOW()`);
+  
+  const result = await query(
+    `UPDATE users SET ${updates.join(', ')} WHERE id = $1 RETURNING *`,
+    values
+  );
+  
+  return mapDbUserToUser(result.rows[0]);
+};
+
 export const updateReputationScore = async (id: string, score: number): Promise<void> => {
   await query(
     'UPDATE users SET reputation_score = $2, updated_at = NOW() WHERE id = $1',

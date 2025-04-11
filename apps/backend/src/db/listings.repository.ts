@@ -1,5 +1,6 @@
 import { query } from './index';
 import { Listing, ListingStatus } from '../types';
+import cacheService from '../services/cache.service';
 
 export const create = async (listingData: Omit<Listing, 'id' | 'createdAt' | 'updatedAt'>): Promise<Listing> => {
   const { sellerId, title, description, price, currency, category, status, images } = listingData;
@@ -17,13 +18,26 @@ export const create = async (listingData: Omit<Listing, 'id' | 'createdAt' | 'up
 };
 
 export const findById = async (id: string): Promise<Listing | null> => {
-  const result = await query('SELECT * FROM listings WHERE id = $1', [id]);
+  const cacheKey = `listing:${id}`;
+  const cachedListing = await cacheService.get<Listing>(cacheKey);
+  
+  if (cachedListing) {
+    return cachedListing;
+  }
+
+  const result = await query(
+    'SELECT * FROM listings WHERE id = $1',
+    [id]
+  );
 
   if (result.rows.length === 0) {
     return null;
   }
 
-  return mapDbListingToListing(result.rows[0]);
+  const listing = mapDbListingToListing(result.rows[0]);
+  await cacheService.set(cacheKey, listing, { ttl: 600 }); // Cache for 10 minutes
+  
+  return listing;
 };
 
 export const findAll = async (
@@ -146,7 +160,15 @@ export const update = async (
     return null;
   }
   
-  return mapDbListingToListing(result.rows[0]);
+  const updatedListing = mapDbListingToListing(result.rows[0]);
+  
+  await cacheService.del(`listing:${id}`);
+  
+  if (data.category) {
+    await cacheService.del(`listings:category:${data.category}:*`);
+  }
+  
+  return updatedListing;
 };
 
 export const deleteById = async (id: string): Promise<boolean> => {
@@ -177,8 +199,6 @@ export const getCountByStatus = async (status: ListingStatus): Promise<number> =
  * Get listings that have been flagged or reported by users
  */
 export const getFlaggedListings = async (limit: number = 10, offset: number = 0): Promise<Listing[]> => {
-  // In a real application, you would have a separate table for reports/flags
-  // For now, we'll simulate this by querying listings with specific criteria
   const result = await query(
     `SELECT l.* 
      FROM listings l
@@ -208,10 +228,13 @@ export const updateStatus = async (id: string, status: ListingStatus): Promise<L
     return null;
   }
   
-  return mapDbListingToListing(result.rows[0]);
+  const updatedListing = mapDbListingToListing(result.rows[0]);
+  
+  await cacheService.del(`listing:${id}`);
+  
+  return updatedListing;
 };
 
-// Helper function to map database row to Listing type
 function mapDbListingToListing(listing: any): Listing {
   return {
     id: listing.id,

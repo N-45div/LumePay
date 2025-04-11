@@ -146,7 +146,9 @@ export enum TransactionType {
   DEPOSIT = 'deposit',
   WITHDRAWAL = 'withdrawal',
   REFUND = 'refund',
-  FEE = 'fee'
+  FEE = 'fee',
+  SWAP = 'swap',
+  YIELD = 'yield'
 }
 
 export enum TransactionStatus {
